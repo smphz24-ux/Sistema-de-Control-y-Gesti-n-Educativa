@@ -1,0 +1,94 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Poppins", ui-sans-serif, system-ui, sans-serif;
+  --radius-4xl: 2rem;
+  --radius-5xl: 3rem;
+}
+
+body {
+    font-family: 'Poppins', sans-serif;
+    background-color: #f1f5f9;
+    color: #0f172a;
+}
+
+.gradient-brand {
+    background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 100%);
+}
+
+.glass-card {
+    background: rgba(255, 255, 255, 0.8);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.sidebar-active {
+    background: rgba(255, 255, 255, 0.1);
+    border-left: 3px solid #fbbf24;
+}
+
+@keyframes slideUp {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-slide-up {
+    animation: slideUp 0.3s ease-out forwards;
+}
+
+.animate-fade-in {
+    animation: fadeIn 0.2s ease-out forwards;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+@keyframes scanLine {
+    0% { top: 0; }
+    100% { top: 100%; }
+}
+
+.no-scrollbar::-webkit-scrollbar {
+    display: none;
+}
+
+.no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+}
+
+/* Professional Table Styles */
+.stnj-table {
+    @apply w-full border-separate border-spacing-0;
+}
+
+.stnj-table th {
+    @apply bg-slate-50 text-slate-500 font-bold text-[10px] uppercase tracking-widest p-4 border-b border-slate-100 text-left;
+}
+
+.stnj-table td {
+    @apply p-4 border-b border-slate-50 text-sm text-slate-600 transition-colors;
+}
+
+.stnj-table tr:hover td {
+    @apply bg-slate-50/50;
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+    width: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.1);
+    border-radius: 10px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: rgba(0, 0, 0, 0.2);
+}

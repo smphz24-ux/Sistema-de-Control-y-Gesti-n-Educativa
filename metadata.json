@@ -1,0 +1,7 @@
+{
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "name": "Sistema de Control y Gestión Educativa",
+  "description": "Sistema de gestión escolar inteligente con control de asistencia por QR y análisis de datos con IA."
+}
