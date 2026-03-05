@@ -1,6 +1,9 @@
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { createRoot } from 'react-dom/client';
+import { 
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, PieChart, Pie, Legend
+} from 'recharts';
 import { GoogleGenAI } from "@google/genai";
 import { 
   Users, 
@@ -116,6 +119,16 @@ interface Student {
   logo?: string; // base64 logo override
   primaryColor?: string;
   secondaryColor?: string;
+}
+
+interface ConsultationLog {
+  id: string;
+  studentDni: string;
+  nivel: string;
+  grado: string;
+  seccion: string;
+  timestamp: number;
+  date: string; // YYYY-MM-DD
 }
 
 type AttendanceStatus = 'entrada' | 'tardanza' | 'ausente' | 'salida' | 'permiso';
@@ -240,10 +253,35 @@ const App = () => {
   const [activeConfigSubTab, setActiveConfigSubTab] = useState<'usuarios' | 'sistema'>('usuarios');
   const [activeReportSubTab, setActiveReportSubTab] = useState<'global' | 'personalizado'>('global');
   const [activeAlertaSubTab, setActiveAlertaSubTab] = useState<'registro' | 'historial'>('registro');
-  const [activePanelSubTab, setActivePanelSubTab] = useState<'perfil' | 'grados' | 'horarios' | 'alerta'>('perfil');
+  const [activePanelSubTab, setActivePanelSubTab] = useState<'perfil' | 'grados' | 'horarios' | 'alerta' | 'profesores'>('perfil');
   const [activeGradosSubTab, setActiveGradosSubTab] = useState<'niveles' | 'grados'>('niveles');
-  const [activeHorariosSubTab, setActiveHorariosSubTab] = useState<'clases' | 'turnos'>('clases');
+  const [activeHorariosSubTab, setActiveHorariosSubTab] = useState<'clases' | 'turnos' | 'config' | 'creador' | 'materias'>('clases');
   const [panelModalType, setPanelModalType] = useState<'level' | 'grade' | 'shift' | 'schedule' | 'profile' | 'report' | 'siteConfig' | null>(null);
+  
+  // New States for Grades and Schedules
+  const [courses, setCourses] = useState<{id: string, name: string, color: string, teacherId?: string, grades?: string[]}[]>([]);
+  const [gradeTypes, setGradeTypes] = useState<{id: string, name: string}[]>([
+    {id: '1', name: 'Tarea'},
+    {id: '2', name: 'Examen'},
+    {id: '3', name: 'Medición'},
+    {id: '4', name: 'Participación'}
+  ]);
+  const [timeSlots, setTimeSlots] = useState<{id: string, start: string, end: string}[]>(
+    Array.from({ length: 10 }).map((_, i) => ({
+      id: i.toString(),
+      start: `${(7 + i).toString().padStart(2, '0')}:00`,
+      end: `${(8 + i).toString().padStart(2, '0')}:00`
+    }))
+  );
+  const [calificacionesSearch, setCalificacionesSearch] = useState("");
+  const [calificacionesGradeFilter, setCalificacionesGradeFilter] = useState("");
+  const [calificacionesLevelFilter, setCalificacionesLevelFilter] = useState("");
+  const [calificacionesSectionFilter, setCalificacionesSectionFilter] = useState("");
+  const [selectedGradeType, setSelectedGradeType] = useState("");
+  const [editingCourse, setEditingCourse] = useState<{id: string, name: string, color: string, teacherId?: string} | null>(null);
+  const [editingTimeSlot, setEditingTimeSlot] = useState<{id: string, start: string, end: string} | null>(null);
+  const [editingShift, setEditingShift] = useState<Shift | null>(null);
+  const [draggedCourse, setDraggedCourse] = useState<any>(null);
   const [configTargetUser, setConfigTargetUser] = useState<AppUser | null>(null);
   const [students, setStudents] = useState<Student[]>([]);
   const [attendance, setAttendance] = useState<Attendance[]>([]);
@@ -328,6 +366,7 @@ const App = () => {
   const [adminLoginPassword, setAdminLoginPassword] = useState("");
   const [consultasSearchDni, setConsultasSearchDni] = useState("");
   const [consultasResult, setConsultasResult] = useState<Student | null>(null);
+  const [consultationLogs, setConsultationLogs] = useState<ConsultationLog[]>([]);
   const [activeConsultasTab, setActiveConsultasTab] = useState<'asistencia' | 'alerta' | 'horario'>('asistencia');
   const [isConsultasModalOpen, setIsConsultasModalOpen] = useState(false);
   const [isDniInputModalOpen, setIsDniInputModalOpen] = useState(false);
@@ -423,7 +462,14 @@ const App = () => {
     if (sharedData.incidenceTypes) {
       setIncidencesTypes(sharedData.incidenceTypes);
     }
+
+    const savedLogs = localStorage.getItem('stnj_consultation_logs');
+    if (savedLogs) setConsultationLogs(JSON.parse(savedLogs));
   }, []);
+
+  useEffect(() => {
+    localStorage.setItem('stnj_consultation_logs', JSON.stringify(consultationLogs));
+  }, [consultationLogs]);
 
   // Load user-specific data when currentUser changes
   useEffect(() => {
@@ -1349,10 +1395,27 @@ const App = () => {
       setIsDniInputModalOpen(false);
       setIsConsultasModalOpen(true);
       setConsultasSearchDni("");
-      // Set default tab based on visibility
-      if (pub.attendance) setActiveConsultasTab('asistencia');
-      else if (pub.alerts) setActiveConsultasTab('alerta');
-      else if (pub.schedule) setActiveConsultasTab('horario');
+
+      // Log the search
+      const newLog: ConsultationLog = {
+        id: Date.now().toString(),
+        studentDni: student.dni,
+        nivel: student.nivel,
+        grado: student.grado,
+        seccion: student.seccion,
+        timestamp: Date.now(),
+        date: new Date().toISOString().split('T')[0]
+      };
+      setConsultationLogs(prev => [...prev, newLog]);
+
+      // Set default tab based on role
+      if (student.rol === 'Docente') {
+        setActiveConsultasTab('horario');
+      } else {
+        if (pub.attendance) setActiveConsultasTab('asistencia');
+        else if (pub.alerts) setActiveConsultasTab('alerta');
+        else if (pub.schedule) setActiveConsultasTab('horario');
+      }
     } else {
       setToast({ message: "No se encontró ningún estudiante con ese DNI.", type: 'error' });
     }
@@ -1462,55 +1525,67 @@ const App = () => {
         {/* Consultas Modal */}
         {isConsultasModalOpen && consultasResult && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 md:p-10 bg-slate-950/90 backdrop-blur-xl animate-fade-in">
-            <div className="bg-white rounded-[3rem] shadow-2xl w-full max-w-5xl h-full max-h-[90vh] overflow-hidden flex flex-col animate-slide-up">
-              {/* Modal Header */}
-              <div className="p-8 border-b border-slate-100 flex flex-col md:flex-row justify-between items-center gap-6 text-white relative overflow-hidden" style={{ background: `linear-gradient(135deg, ${consultasResult.primaryColor || globalConfig.theme.primaryColor} 0%, ${consultasResult.secondaryColor || globalConfig.theme.secondaryColor} 100%)` }}>
-                <div className="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full -mr-32 -mt-32 blur-3xl"></div>
-                <div className="flex items-center gap-6 relative z-10">
-                  <div className="w-20 h-20 rounded-2xl bg-white/10 p-1 border border-white/20">
-                    <div className="w-full h-full rounded-xl bg-slate-800 flex items-center justify-center overflow-hidden">
-                      {consultasResult.foto ? (
-                        <img src={consultasResult.foto} className="w-full h-full object-cover" />
-                      ) : consultasResult.logo ? (
-                        <img src={consultasResult.logo} className="w-full h-full object-contain p-2 opacity-50" />
-                      ) : (
-                        <User size={32} className="text-slate-500" />
-                      )}
+            <div className="bg-white rounded-[3rem] shadow-2xl w-full max-w-5xl h-full max-h-[90vh] overflow-hidden flex flex-col animate-slide-up relative">
+              {/* Fixed Close Button */}
+              <button 
+                onClick={() => setIsConsultasModalOpen(false)} 
+                className="absolute top-6 right-6 z-[110] bg-black/20 hover:bg-black/40 text-white p-3 rounded-full transition-all shadow-lg"
+              >
+                <X size={24} />
+              </button>
+
+              {/* Scrollable Container */}
+              <div className="flex-1 overflow-y-auto no-scrollbar bg-slate-50">
+                {/* Modal Header (Now inside scrollable area) */}
+                <div className="p-8 md:p-12 border-b border-slate-100 flex flex-col md:flex-row justify-between items-center gap-8 text-white relative overflow-hidden" style={{ background: `linear-gradient(135deg, ${consultasResult.primaryColor || globalConfig.theme.primaryColor} 0%, ${consultasResult.secondaryColor || globalConfig.theme.secondaryColor} 100%)` }}>
+                  <div className="absolute top-0 right-0 w-96 h-96 bg-white/10 rounded-full -mr-48 -mt-48 blur-3xl"></div>
+                  <div className="flex flex-col sm:flex-row items-center gap-6 relative z-10 w-full md:w-auto text-center sm:text-left">
+                    <div className="w-24 h-24 rounded-3xl bg-white/10 p-1 border border-white/20 mx-auto sm:mx-0 shadow-2xl">
+                      <div className="w-full h-full rounded-2xl bg-slate-800 flex items-center justify-center overflow-hidden">
+                        {consultasResult.foto ? (
+                          <img src={consultasResult.foto} className="w-full h-full object-cover" />
+                        ) : consultasResult.logo ? (
+                          <img src={consultasResult.logo} className="w-full h-full object-contain p-2 opacity-50" />
+                        ) : (
+                          <User size={40} className="text-slate-500" />
+                        )}
+                      </div>
+                    </div>
+                    <div>
+                      <h2 className="text-2xl md:text-4xl font-black uppercase tracking-tight leading-none mb-2">{consultasResult.nombre} {consultasResult.apellido}</h2>
+                      <div className="flex flex-wrap justify-center sm:justify-start gap-3">
+                        <span className="bg-white/20 px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest border border-white/10">DNI: {consultasResult.dni}</span>
+                        <span className="bg-white/20 px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest border border-white/10">{consultasResult.grado} "{consultasResult.seccion}"</span>
+                        {consultasResult.siteName && <span className="bg-white/10 px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest border border-white/5">{consultasResult.siteName}</span>}
+                      </div>
                     </div>
                   </div>
-                  <div>
-                    <h2 className="text-2xl font-black uppercase tracking-tight">{consultasResult.nombre} {consultasResult.apellido}</h2>
-                    <p className="text-blue-400 text-[10px] font-black uppercase tracking-[0.2em] mt-1">
-                      DNI: {consultasResult.dni} • {consultasResult.grado} "{consultasResult.seccion}"
-                      {consultasResult.siteName && <span className="text-white/40 ml-2">• {consultasResult.siteName}</span>}
-                    </p>
-                  </div>
-                </div>
-                <div className="flex bg-white/10 p-1.5 rounded-2xl border border-white/10 overflow-x-auto no-scrollbar relative z-10">
-                  {pub.attendance && (
-                    <button 
-                      onClick={() => setActiveConsultasTab('asistencia')}
-                      className={`px-6 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all whitespace-nowrap ${activeConsultasTab === 'asistencia' ? 'bg-white text-slate-900 shadow-lg' : 'text-white/60 hover:text-white'}`}
-                    >Asistencia</button>
-                  )}
-                  {pub.alerts && (
-                    <button 
-                      onClick={() => setActiveConsultasTab('alerta')}
-                      className={`px-6 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all whitespace-nowrap ${activeConsultasTab === 'alerta' ? 'bg-white text-slate-900 shadow-lg' : 'text-white/60 hover:text-white'}`}
-                    >Alertas</button>
-                  )}
-                  {pub.schedule && (
-                    <button 
-                      onClick={() => setActiveConsultasTab('horario')}
-                      className={`px-6 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all whitespace-nowrap ${activeConsultasTab === 'horario' ? 'bg-white text-slate-900 shadow-lg' : 'text-white/60 hover:text-white'}`}
-                    >Horario</button>
+                  {consultasResult?.rol !== 'Docente' && (
+                    <div className="flex bg-white/10 p-2 rounded-2xl border border-white/10 overflow-x-auto no-scrollbar relative z-10 w-full md:w-auto justify-center shadow-xl">
+                      {pub.attendance && (
+                        <button 
+                          onClick={() => setActiveConsultasTab('asistencia')}
+                          className={`flex-1 md:flex-none px-6 py-4 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all whitespace-nowrap ${activeConsultasTab === 'asistencia' ? 'bg-white text-slate-900 shadow-xl scale-105' : 'text-white/60 hover:text-white'}`}
+                        >Asistencia</button>
+                      )}
+                      {pub.alerts && (
+                        <button 
+                          onClick={() => setActiveConsultasTab('alerta')}
+                          className={`flex-1 md:flex-none px-6 py-4 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all whitespace-nowrap ${activeConsultasTab === 'alerta' ? 'bg-white text-slate-900 shadow-xl scale-105' : 'text-white/60 hover:text-white'}`}
+                        >Alertas</button>
+                      )}
+                      {pub.schedule && (
+                        <button 
+                          onClick={() => setActiveConsultasTab('horario')}
+                          className={`flex-1 md:flex-none px-6 py-4 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all whitespace-nowrap ${activeConsultasTab === 'horario' ? 'bg-white text-slate-900 shadow-xl scale-105' : 'text-white/60 hover:text-white'}`}
+                        >Horario</button>
+                      )}
+                    </div>
                   )}
                 </div>
-                <button onClick={() => setIsConsultasModalOpen(false)} className="absolute top-6 right-6 md:relative md:top-0 md:right-0 hover:bg-white/20 p-3 rounded-full transition-all relative z-10"><X size={24} /></button>
-              </div>
 
-              {/* Modal Content */}
-              <div className="flex-1 overflow-y-auto p-8 md:p-12 bg-slate-50 no-scrollbar">
+                {/* Modal Content */}
+                <div className="p-8 md:p-12">
                 {activeConsultasTab === 'asistencia' && (
                   <div className="space-y-8 animate-fade-in">
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -1529,35 +1604,37 @@ const App = () => {
                     </div>
 
                     <div className="bg-white rounded-3xl shadow-xl border border-slate-200 overflow-hidden">
-                      <table className="w-full text-left">
-                        <thead>
-                          <tr className="text-white" style={{ backgroundColor: consultasResult.primaryColor || globalConfig.theme.primaryColor }}>
-                            <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest">Fecha</th>
-                            <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest">Entrada</th>
-                            <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest">Salida</th>
-                            <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest">Estado</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100">
-                          {attendance.filter(a => a.studentDni === consultasResult.dni).sort((a, b) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime()).map(att => (
-                            <tr key={att.id} className="hover:bg-slate-50 transition-colors">
-                              <td className="px-6 py-4 font-bold text-slate-700 text-sm">{att.fecha}</td>
-                              <td className="px-6 py-4 font-black text-slate-900 text-sm">{att.horaEntrada || '--:--'}</td>
-                              <td className="px-6 py-4 font-black text-slate-900 text-sm">{att.horaSalida || '--:--'}</td>
-                              <td className="px-6 py-4">
-                                <span className={`px-3 py-1 rounded-full font-black text-[8px] uppercase tracking-widest ${
-                                  att.estado === 'entrada' ? 'bg-emerald-50 text-emerald-600' :
-                                  att.estado === 'tardanza' ? 'bg-amber-50 text-amber-600' :
-                                  att.estado === 'salida' ? 'bg-blue-50 text-blue-600' :
-                                  'bg-rose-50 text-rose-600'
-                                }`}>
-                                  {att.estado}
-                                </span>
-                              </td>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left min-w-[500px]">
+                          <thead>
+                            <tr className="text-white" style={{ backgroundColor: consultasResult.primaryColor || globalConfig.theme.primaryColor }}>
+                              <th className="px-4 md:px-6 py-4 text-[10px] font-black uppercase tracking-widest">Fecha</th>
+                              <th className="px-4 md:px-6 py-4 text-[10px] font-black uppercase tracking-widest">Entrada</th>
+                              <th className="px-4 md:px-6 py-4 text-[10px] font-black uppercase tracking-widest">Salida</th>
+                              <th className="px-4 md:px-6 py-4 text-[10px] font-black uppercase tracking-widest">Estado</th>
                             </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {attendance.filter(a => a.studentDni === consultasResult.dni).sort((a, b) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime()).map(att => (
+                              <tr key={att.id} className="hover:bg-slate-50 transition-colors">
+                                <td className="px-4 md:px-6 py-4 font-bold text-slate-700 text-sm whitespace-nowrap">{att.fecha}</td>
+                                <td className="px-4 md:px-6 py-4 font-black text-slate-900 text-sm">{att.horaEntrada || '--:--'}</td>
+                                <td className="px-4 md:px-6 py-4 font-black text-slate-900 text-sm">{att.horaSalida || '--:--'}</td>
+                                <td className="px-4 md:px-6 py-4">
+                                  <span className={`px-3 py-1 rounded-full font-black text-[8px] uppercase tracking-widest ${
+                                    att.estado === 'entrada' ? 'bg-emerald-50 text-emerald-600' :
+                                    att.estado === 'tardanza' ? 'bg-amber-50 text-amber-600' :
+                                    att.estado === 'salida' ? 'bg-blue-50 text-blue-600' :
+                                    'bg-rose-50 text-rose-600'
+                                  }`}>
+                                    {att.estado}
+                                  </span>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
                     </div>
                   </div>
                 )}
@@ -1605,59 +1682,117 @@ const App = () => {
                 )}
 
                 {activeConsultasTab === 'horario' && (
-                  <div className="space-y-8 animate-fade-in" id="public-schedule-view">
-                    <div className="flex justify-between items-center">
+                  <div className="space-y-8 animate-fade-in">
+                    <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
                       <h3 className="text-2xl font-black text-slate-800 uppercase tracking-tight">Horario Semanal</h3>
                       <button 
                         onClick={() => {
-                          const element = document.getElementById('public-schedule-view');
+                          const element = document.getElementById('public-schedule-export');
                           if (element) {
-                            htmlToImage.toJpeg(element, { quality: 0.95, backgroundColor: '#f8fafc' })
+                            element.style.display = 'block';
+                            htmlToImage.toJpeg(element, { quality: 0.95, backgroundColor: '#ffffff' })
                               .then((dataUrl) => {
                                 const link = document.createElement('a');
                                 link.download = `horario_${consultasResult.nombre}_${consultasResult.apellido}.jpg`;
                                 link.href = dataUrl;
                                 link.click();
+                                element.style.display = 'none';
                               });
                           }
                         }}
-                        className="bg-slate-900 text-white px-6 py-3 rounded-xl font-black uppercase tracking-widest text-[10px] shadow-lg hover:bg-slate-800 transition-all flex items-center gap-2"
+                        className="w-full sm:w-auto bg-slate-900 text-white px-6 py-3 rounded-xl font-black uppercase tracking-widest text-[10px] shadow-lg hover:bg-slate-800 transition-all flex items-center justify-center gap-2"
                       >
                         <Download size={16} /> Descargar JPG
                       </button>
                     </div>
 
-                    <div className="bg-white rounded-[3rem] shadow-2xl border border-slate-200 overflow-hidden">
-                      <div className="grid grid-cols-8 text-white" style={{ backgroundColor: consultasResult.primaryColor || globalConfig.theme.primaryColor }}>
-                        <div className="p-4 text-[9px] font-black uppercase tracking-widest border-r border-white/10">Hora</div>
-                        {['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'].map(dia => (
-                          <div key={dia} className="p-4 text-[9px] font-black uppercase tracking-widest text-center border-r border-white/10 last:border-0">{dia}</div>
-                        ))}
+                    {/* Exportable Schedule View (Hidden) */}
+                    <div id="public-schedule-export" className="hidden p-10 bg-white" style={{ width: '1200px' }}>
+                      <div className="flex items-center gap-8 mb-10 pb-10 border-b-4 border-slate-900">
+                        <div className="w-32 h-32 rounded-3xl bg-slate-100 flex items-center justify-center overflow-hidden border-4 border-slate-900">
+                          {consultasResult.foto ? <img src={consultasResult.foto} className="w-full h-full object-cover" /> : <User size={64} className="text-slate-300" />}
+                        </div>
+                        <div>
+                          <h1 className="text-5xl font-black text-slate-900 uppercase tracking-tighter mb-2">{consultasResult.nombre} {consultasResult.apellido}</h1>
+                          <div className="flex gap-6">
+                            <div className="bg-slate-900 text-white px-4 py-2 rounded-xl font-black uppercase text-xs tracking-widest">DNI: {consultasResult.dni}</div>
+                            <div className="bg-blue-600 text-white px-4 py-2 rounded-xl font-black uppercase text-xs tracking-widest">{consultasResult.nivel}</div>
+                            <div className="bg-indigo-600 text-white px-4 py-2 rounded-xl font-black uppercase text-xs tracking-widest">{consultasResult.grado} "{consultasResult.seccion}"</div>
+                          </div>
+                        </div>
+                        <div className="ml-auto text-right">
+                          <h2 className="text-2xl font-black text-slate-900 uppercase tracking-widest">{globalConfig.siteName}</h2>
+                          <p className="text-slate-400 font-bold uppercase tracking-widest text-xs">Horario Escolar 2026</p>
+                        </div>
                       </div>
-                      
-                      <div className="divide-y divide-slate-100">
-                        {/* Simplified schedule view for public */}
-                        {Array.from({ length: 10 }).map((_, i) => {
-                          const hour = 7 + i;
-                          const timeStr = `${hour.toString().padStart(2, '0')}:00`;
-                          return (
-                            <div key={i} className="grid grid-cols-8 hover:bg-slate-50 transition-colors">
-                              <div className="p-4 text-[10px] font-black text-slate-400 border-r border-slate-100 bg-slate-50/50">{timeStr}</div>
-                              {['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'].map(dia => {
-                                const sch = schedules.find(s => s.dia === dia && s.inicio <= timeStr && s.fin > timeStr && (s.targetId === consultasResult.id || gradeLevels.find(gl => gl.id === s.targetId && gl.nombre === consultasResult.grado && gl.seccion === consultasResult.seccion)));
-                                return (
-                                  <div key={dia} className="p-2 border-r border-slate-100 last:border-0 min-h-[60px] flex items-center justify-center">
-                                    {sch && (
-                                      <div className={`w-full h-full p-2 rounded-xl flex flex-col items-center justify-center text-center shadow-sm border ${sch.type === 'clase' ? 'bg-blue-50 border-blue-100 text-blue-700' : 'bg-emerald-50 border-emerald-100 text-emerald-700'}`}>
-                                        <p className="text-[8px] font-black uppercase leading-tight">{sch.materia || (sch.type === 'clase' ? 'Clase' : 'Laboral')}</p>
+
+                      <div className="bg-white rounded-[2rem] shadow-2xl border-4 border-slate-900 overflow-hidden">
+                        <div className="grid grid-cols-8 text-white bg-slate-900">
+                          <div className="p-6 text-xs font-black uppercase tracking-widest border-r border-white/10">Hora</div>
+                          {['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'].map(dia => (
+                            <div key={dia} className="p-6 text-xs font-black uppercase tracking-widest text-center border-r border-white/10 last:border-0">{dia}</div>
+                          ))}
+                        </div>
+                        <div className="divide-y-2 divide-slate-100">
+                          {Array.from({ length: 10 }).map((_, i) => {
+                            const hour = 7 + i;
+                            const timeStr = `${hour.toString().padStart(2, '0')}:00`;
+                            return (
+                              <div key={i} className="grid grid-cols-8">
+                                <div className="p-6 text-xs font-black text-slate-400 border-r-2 border-slate-100 bg-slate-50/50">{timeStr}</div>
+                                {['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'].map(dia => {
+                                  const sch = schedules.find(s => s.dia === dia && s.inicio <= timeStr && s.fin > timeStr && (s.targetId === consultasResult.id || gradeLevels.find(gl => gl.id === s.targetId && gl.nombre === consultasResult.grado && gl.seccion === consultasResult.seccion)));
+                                  return (
+                                    <div key={dia} className="p-2 border-r-2 border-slate-100 last:border-0 min-h-[80px] flex items-center justify-center">
+                                      {sch && (
+                                        <div className={`w-full h-full p-3 rounded-2xl flex flex-col items-center justify-center text-center shadow-sm border-2 ${sch.type === 'clase' ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-emerald-50 border-emerald-200 text-emerald-700'}`}>
+                                          <p className="text-[10px] font-black uppercase leading-tight">{sch.materia || (sch.type === 'clase' ? 'Clase' : 'Laboral')}</p>
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Visual Schedule View */}
+                    <div className="bg-white rounded-3xl md:rounded-[3rem] shadow-2xl border border-slate-200 overflow-hidden">
+                      <div className="overflow-x-auto no-scrollbar touch-pan-x">
+                        <div className="min-w-[700px] md:min-w-[1000px]">
+                          <div className="grid grid-cols-8 text-white sticky top-0 z-20" style={{ backgroundColor: consultasResult.primaryColor || globalConfig.theme.primaryColor }}>
+                            <div className="p-3 md:p-4 text-[8px] md:text-[9px] font-black uppercase tracking-widest border-r border-white/10">Hora</div>
+                            {['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'].map(dia => (
+                              <div key={dia} className="p-3 md:p-4 text-[8px] md:text-[9px] font-black uppercase tracking-widest text-center border-r border-white/10 last:border-0">{dia}</div>
+                            ))}
+                          </div>
+                          
+                          <div className="divide-y divide-slate-100">
+                            {timeSlots.map((slot, i) => {
+                              const timeStr = slot.start;
+                              return (
+                                <div key={i} className="grid grid-cols-8 hover:bg-slate-50 transition-colors">
+                                  <div className="p-3 md:p-4 text-[9px] md:text-[10px] font-black text-slate-400 border-r border-slate-100 bg-slate-50/50 flex items-center justify-center">{timeStr}</div>
+                                  {['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'].map(dia => {
+                                    const sch = schedules.find(s => s.dia === dia && s.inicio <= timeStr && s.fin > timeStr && (s.targetId === consultasResult.id || gradeLevels.find(gl => gl.id === s.targetId && gl.nombre === consultasResult.grado && gl.seccion === consultasResult.seccion)));
+                                    return (
+                                      <div key={dia} className="p-1 md:p-2 border-r border-slate-100 last:border-0 min-h-[50px] md:min-h-[70px] flex items-center justify-center">
+                                        {sch && (
+                                          <div className={`w-full h-full p-1.5 md:p-2 rounded-lg md:rounded-xl flex flex-col items-center justify-center text-center shadow-sm border ${sch.type === 'clase' ? 'bg-blue-50 border-blue-100 text-blue-700' : 'bg-emerald-50 border-emerald-100 text-emerald-700'}`}>
+                                            <p className="text-[7px] md:text-[8px] font-black uppercase leading-tight">{sch.materia || (sch.type === 'clase' ? 'Clase' : 'Laboral')}</p>
+                                          </div>
+                                        )}
                                       </div>
-                                    )}
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          );
-                        })}
+                                    );
+                                  })}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -1665,7 +1800,8 @@ const App = () => {
               </div>
             </div>
           </div>
-        )}
+        </div>
+      )}
 
         {/* Admin Login Modal */}
         {isAdminLoginModalOpen && (
@@ -1930,7 +2066,7 @@ const App = () => {
                       </div>
                     </div>
 
-                    <div className="flex flex-wrap gap-4 pt-4 border-t border-slate-100">
+                    <div className="flex flex-col sm:flex-row flex-wrap gap-4 pt-4 border-t border-slate-100">
                       <button 
                         onClick={() => {
                           setReportSearchTerm("");
@@ -1938,15 +2074,15 @@ const App = () => {
                           setReportDateFilter(new Date().toISOString().split('T')[0]);
                           setReportRoleFilter("todos");
                         }}
-                        className="flex items-center gap-2 px-6 py-3 rounded-xl bg-slate-100 text-slate-600 font-black uppercase tracking-widest text-[10px] hover:bg-slate-200 transition-all"
+                        className="flex items-center justify-center gap-2 px-6 py-3 rounded-xl bg-slate-100 text-slate-600 font-black uppercase tracking-widest text-[10px] hover:bg-slate-200 transition-all w-full sm:w-auto"
                       >
                         <RefreshCw size={16} /> Limpiar Filtros
                       </button>
 
-                      <div className="flex-1"></div>
+                      <div className="hidden sm:block flex-1"></div>
 
-                      <div className="flex gap-2">
-                        <label className="cursor-pointer flex items-center gap-2 px-6 py-3 rounded-xl bg-indigo-600 text-white font-black uppercase tracking-widest text-[10px] hover:bg-indigo-700 transition-all shadow-lg">
+                      <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+                        <label className="cursor-pointer flex items-center justify-center gap-2 px-6 py-3 rounded-xl bg-indigo-600 text-white font-black uppercase tracking-widest text-[10px] hover:bg-indigo-700 transition-all shadow-lg w-full sm:w-auto">
                           <Upload size={16} /> Importar Asistencia
                           <input type="file" className="hidden" accept=".xlsx, .xls" onChange={handleImportAttendance} />
                         </label>
@@ -1964,7 +2100,7 @@ const App = () => {
                             }));
                             exportToExcel(data, `reporte_global_${reportDateFilter}`);
                           }}
-                          className="flex items-center gap-2 px-6 py-3 rounded-xl bg-emerald-600 text-white font-black uppercase tracking-widest text-[10px] hover:bg-emerald-700 transition-all shadow-lg"
+                          className="flex items-center justify-center gap-2 px-6 py-3 rounded-xl bg-emerald-600 text-white font-black uppercase tracking-widest text-[10px] hover:bg-emerald-700 transition-all shadow-lg w-full sm:w-auto"
                         >
                           <Database size={16} /> Excel
                         </button>
@@ -1980,7 +2116,7 @@ const App = () => {
                             }));
                             exportToPDF(data, `Reporte Global de Asistencia - ${reportDateFilter}`);
                           }}
-                          className="flex items-center gap-2 px-6 py-3 rounded-xl bg-rose-600 text-white font-black uppercase tracking-widest text-[10px] hover:bg-rose-700 transition-all shadow-lg"
+                          className="flex items-center justify-center gap-2 px-6 py-3 rounded-xl bg-rose-600 text-white font-black uppercase tracking-widest text-[10px] hover:bg-rose-700 transition-all shadow-lg w-full sm:w-auto"
                         >
                           <FileText size={16} /> PDF
                         </button>
@@ -1989,8 +2125,9 @@ const App = () => {
                   </div>
 
                   {/* Results Table */}
-                  <div className="bg-white rounded-[3.5rem] shadow-2xl overflow-hidden border border-slate-200">
-                    <table className="w-full text-left">
+                  <div className="bg-white rounded-[2rem] md:rounded-[3.5rem] shadow-2xl overflow-hidden border border-slate-200">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left min-w-[800px]">
                       <thead className="bg-slate-50 border-b border-slate-200">
                         <tr>
                           <th className="p-6 font-black text-slate-400 uppercase text-[10px] tracking-widest">Persona</th>
@@ -2051,7 +2188,8 @@ const App = () => {
                     </table>
                   </div>
                 </div>
-              )}
+              </div>
+            )}
 
               {activeReportSubTab === 'personalizado' && (
                 <div className="animate-slide-up space-y-6">
@@ -2235,8 +2373,21 @@ const App = () => {
                 teachersCount={teachersCount} 
                 grades={grades} 
                 todayAttendance={todayAttendance}
+                consultationLogs={consultationLogs}
                 activeConfig={activeConfig}
               />
+
+              {/* Consultation Analytics Section */}
+              <div className="space-y-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center">
+                    <Search size={16} />
+                  </div>
+                  <h3 className="text-sm font-black text-slate-800 uppercase tracking-widest">Análisis de Consultas Públicas</h3>
+                </div>
+                <ConsultationAnalytics logs={consultationLogs} />
+              </div>
+
               <div className="bg-white rounded-3xl p-8 shadow-md border border-blue-50 relative overflow-hidden group">
                 <div className="flex items-center gap-4 mb-6 relative z-10">
                   <div className="p-3 bg-blue-600 rounded-xl shadow-lg text-white">
@@ -2271,8 +2422,8 @@ const App = () => {
                 <Search className="absolute left-5 top-1/2 transform -translate-y-1/2 text-slate-400" size={20} />
                 <input type="text" placeholder="Buscar por DNI, Nombre, Correo..." className="w-full pl-14 pr-6 py-4 rounded-2xl bg-white border border-slate-200 focus:border-blue-500 outline-none text-lg shadow-md transition-all font-bold placeholder:text-slate-300" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
               </div>
-              <div className="flex flex-wrap gap-3 items-center justify-between bg-white p-4 rounded-2xl border border-slate-100 shadow-md">
-                <div className="flex flex-wrap gap-2">
+              <div className="flex flex-col sm:flex-row flex-wrap gap-4 items-center justify-between bg-white p-4 rounded-2xl border border-slate-100 shadow-md">
+                <div className="flex flex-wrap gap-2 justify-center sm:justify-start">
                   <button onClick={() => fileInputRef.current?.click()} className="bg-emerald-50 text-emerald-600 border border-emerald-100 px-4 py-2 rounded-lg font-black flex items-center gap-2 hover:bg-emerald-600 hover:text-white transition-all shadow-sm uppercase text-[9px]">Importar CSV</button>
                   <button onClick={handleExportCSV} className="bg-slate-50 text-slate-600 border border-slate-200 px-4 py-2 rounded-lg font-black flex items-center gap-2 hover:bg-slate-800 hover:text-white transition-all shadow-sm uppercase text-[9px]">Exportar CSV</button>
                   <button onClick={downloadAllFotochecks} disabled={isDownloadingAll} className="bg-indigo-50 text-indigo-600 border border-indigo-100 px-4 py-2 rounded-lg font-black flex items-center gap-2 hover:bg-indigo-600 hover:text-white transition-all shadow-sm uppercase text-[9px] disabled:opacity-50">
@@ -2283,13 +2434,13 @@ const App = () => {
                     )}
                   </button>
                 </div>
-                <div className="flex items-center gap-3 ml-auto">
-                  <div className="flex items-center bg-slate-900 text-white px-5 py-2 rounded-xl shadow-lg font-black text-[9px] uppercase tracking-widest gap-4">
+                <div className="flex flex-col sm:flex-row items-center gap-3 w-full sm:w-auto">
+                  <div className="flex items-center bg-slate-900 text-white px-5 py-2 rounded-xl shadow-lg font-black text-[9px] uppercase tracking-widest gap-4 w-full sm:w-auto justify-center">
                      <span className="flex items-center gap-2 text-blue-400"><Users size={14}/> {studentsCount} Alumnos</span>
                      <span className="w-px h-4 bg-slate-700"></span>
                      <span className="flex items-center gap-2 text-indigo-400"><GraduationCap size={14}/> {teachersCount} Docentes</span>
                   </div>
-                  <button onClick={deleteAllStudents} className="bg-rose-600 text-white px-5 py-2 rounded-xl font-black hover:bg-rose-700 transition-all shadow-md uppercase tracking-widest text-[9px]">Eliminar Todo</button>
+                  <button onClick={deleteAllStudents} className="bg-rose-600 text-white px-5 py-2 rounded-xl font-black hover:bg-rose-700 transition-all shadow-md uppercase tracking-widest text-[9px] w-full sm:w-auto">Eliminar Todo</button>
                 </div>
                 <input type="file" ref={fileInputRef} className="hidden" accept=".csv" onChange={handleImportCSV} />
               </div>
@@ -2524,7 +2675,7 @@ const App = () => {
               </header>
 
               {activeAlertaSubTab === 'registro' && (
-                <div className="bg-white p-8 rounded-[3.5rem] shadow-2xl border border-slate-200 space-y-8">
+                <div className="bg-white p-4 md:p-8 rounded-3xl md:rounded-[3.5rem] shadow-2xl border border-slate-200 space-y-8">
                   <div className="space-y-4">
                     <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Buscar Alumno (DNI, Nombre o Grado)</label>
                     <div className="relative">
@@ -2632,11 +2783,11 @@ const App = () => {
                           </div>
                           <div className="space-y-2">
                             <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Nivel de Gravedad</label>
-                            <div className="flex gap-2">
+                            <div className="flex flex-col sm:flex-row gap-2">
                               {['leve', 'moderado', 'grave'].map((sev) => (
                                 <label key={sev} className="flex-1">
                                   <input type="radio" name="severity" value={sev} required className="hidden peer" />
-                                  <div className={`text-center p-4 rounded-2xl border-2 border-slate-100 cursor-pointer font-black text-[10px] uppercase tracking-widest transition-all peer-checked:bg-red-600 peer-checked:text-white peer-checked:border-red-600 hover:bg-slate-50`}>
+                                  <div className={`text-center p-3 sm:p-4 rounded-2xl border-2 border-slate-100 cursor-pointer font-black text-[10px] uppercase tracking-widest transition-all peer-checked:bg-red-600 peer-checked:text-white peer-checked:border-red-600 hover:bg-slate-50`}>
                                     {sev}
                                   </div>
                                 </label>
@@ -2657,7 +2808,7 @@ const App = () => {
 
               {activeAlertaSubTab === 'historial' && (
                 <div className="space-y-8">
-                  <div className="bg-white p-8 rounded-[3.5rem] shadow-2xl border border-slate-200 space-y-6">
+                  <div className="bg-white p-4 md:p-8 rounded-3xl md:rounded-[3.5rem] shadow-2xl border border-slate-200 space-y-6">
                     <div className="flex flex-col md:flex-row justify-between items-center gap-6">
                       <div className="flex items-center gap-4">
                         <div className="bg-red-50 p-4 rounded-2xl text-red-600">
@@ -2780,39 +2931,150 @@ const App = () => {
 
           {/* Calificaciones Section */}
           {activeTab === 'calificaciones' && (
-            <div className="animate-slide-up space-y-8">
-               <h2 className="text-3xl md:text-5xl font-black text-slate-800 tracking-tighter text-center italic uppercase">{activeConfig.siteName}</h2>
-               <div className="bg-white rounded-[2rem] md:rounded-[4rem] p-6 md:p-16 shadow-2xl border-t-8 border-t-blue-600 max-w-5xl mx-auto">
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-6 md:gap-8 mb-16">
-                  <div className="sm:col-span-2 space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">Perfil</label>
-                    <select className="w-full p-8 rounded-[2rem] bg-slate-50 border-none font-black text-slate-800 text-xl appearance-none shadow-inner" id="grade-student">
+            <div className="animate-slide-up space-y-6">
+               <h2 className="text-2xl md:text-4xl font-black text-slate-800 tracking-tighter text-center italic uppercase">{activeConfig.siteName}</h2>
+               <div className="bg-white rounded-[2rem] md:rounded-[3rem] p-6 md:p-10 shadow-2xl border-t-4 border-t-blue-600 max-w-6xl mx-auto">
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-4 mb-8">
+                  {/* Search and Filters */}
+                  <div className="md:col-span-4 space-y-2">
+                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-4">Búsqueda de Alumno</label>
+                    <div className="relative">
+                      <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                      <input 
+                        type="text" 
+                        placeholder="Nombre o DNI..." 
+                        value={calificacionesSearch}
+                        onChange={(e) => setCalificacionesSearch(e.target.value)}
+                        className="w-full pl-12 p-3 rounded-xl bg-slate-50 border-none font-bold text-slate-800 text-sm shadow-inner outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="md:col-span-2 space-y-2">
+                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-4">Nivel</label>
+                    <select 
+                      value={calificacionesLevelFilter}
+                      onChange={(e) => setCalificacionesLevelFilter(e.target.value)}
+                      className="w-full p-3 rounded-xl bg-slate-50 border-none font-bold text-slate-800 text-sm shadow-inner outline-none"
+                    >
+                      <option value="">Todos</option>
+                      {levels.map(l => <option key={l.id} value={l.nombre}>{l.nombre}</option>)}
+                    </select>
+                  </div>
+
+                  <div className="md:col-span-2 space-y-2">
+                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-4">Grado</label>
+                    <select 
+                      value={calificacionesGradeFilter}
+                      onChange={(e) => setCalificacionesGradeFilter(e.target.value)}
+                      className="w-full p-3 rounded-xl bg-slate-50 border-none font-bold text-slate-800 text-sm shadow-inner outline-none"
+                    >
+                      <option value="">Todos</option>
+                      {Array.from(new Set(gradeLevels.map(gl => gl.nombre))).map(g => <option key={g} value={g}>{g}</option>)}
+                    </select>
+                  </div>
+
+                  <div className="md:col-span-2 space-y-2">
+                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-4">Sección</label>
+                    <select 
+                      value={calificacionesSectionFilter}
+                      onChange={(e) => setCalificacionesSectionFilter(e.target.value)}
+                      className="w-full p-3 rounded-xl bg-slate-50 border-none font-bold text-slate-800 text-sm shadow-inner outline-none"
+                    >
+                      <option value="">Todas</option>
+                      {Array.from(new Set(gradeLevels.map(gl => gl.seccion))).map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+
+                  <div className="md:col-span-2 flex items-end">
+                    <button 
+                      onClick={() => {
+                        setCalificacionesSearch("");
+                        setCalificacionesGradeFilter("");
+                        setCalificacionesLevelFilter("");
+                        setCalificacionesSectionFilter("");
+                      }}
+                      className="w-full p-3 bg-slate-100 text-slate-500 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-200 transition-all"
+                    >Limpiar</button>
+                  </div>
+                </div>
+
+                {/* Student Selection List */}
+                <div className="mb-8">
+                  <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-4 mb-2 block">Seleccionar Alumno</label>
+                  <div className="max-h-48 overflow-y-auto no-scrollbar border-2 border-slate-50 rounded-2xl p-2 space-y-2">
+                    {students
+                      .filter(s => {
+                        const matchesSearch = (s.nombre + " " + s.apellido + " " + s.dni).toLowerCase().includes(calificacionesSearch.toLowerCase());
+                        const matchesLevel = !calificacionesLevelFilter || s.nivel === calificacionesLevelFilter;
+                        const matchesGrade = !calificacionesGradeFilter || s.grado === calificacionesGradeFilter;
+                        const matchesSection = !calificacionesSectionFilter || s.seccion === calificacionesSectionFilter;
+                        return matchesSearch && matchesLevel && matchesGrade && matchesSection;
+                      })
+                      .map(s => (
+                        <button
+                          key={s.id}
+                          onClick={() => setSelectedPersonalStudent(s)}
+                          className={`w-full p-3 rounded-xl flex justify-between items-center transition-all ${selectedPersonalStudent?.id === s.id ? 'bg-blue-600 text-white shadow-lg' : 'bg-slate-50 text-slate-700 hover:bg-slate-100'}`}
+                        >
+                          <span className="font-bold text-sm">{s.nombre} {s.apellido}</span>
+                          <span className="text-[10px] opacity-60">{s.dni} • {s.grado} "{s.seccion}"</span>
+                        </button>
+                      ))}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
+                  <div className="space-y-2">
+                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-4">Materia</label>
+                    <select className="w-full p-3 rounded-xl bg-slate-50 border-none font-bold text-slate-800 text-sm shadow-inner outline-none" id="grade-materia">
                       <option value="">-- Seleccionar --</option>
-                      {students.map(s => <option key={s.id} value={s.id}>{s.nombre} {s.apellido} ({s.dni})</option>)}
+                      {courses.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                      {courses.length === 0 && (
+                        <>
+                          <option>Matemáticas</option>
+                          <option>Lenguaje</option>
+                          <option>Ciencias</option>
+                          <option>Historia</option>
+                        </>
+                      )}
                     </select>
                   </div>
                   <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">Materia</label>
-                    <select className="w-full p-8 rounded-[2rem] bg-slate-50 border-none font-black text-slate-800 text-xl appearance-none shadow-inner" id="grade-materia"><option>Matemáticas</option><option>Lenguaje</option><option>Ciencias</option><option>Historia</option></select>
+                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-4">Tipo de Nota</label>
+                    <select className="w-full p-3 rounded-xl bg-slate-50 border-none font-bold text-slate-800 text-sm shadow-inner outline-none" id="grade-type">
+                      {gradeTypes.map(gt => <option key={gt.id} value={gt.name}>{gt.name}</option>)}
+                    </select>
                   </div>
                   <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4 text-center block">Nota</label>
-                    <input type="number" placeholder="00" className="w-full p-8 rounded-[2rem] bg-slate-50 border-none font-black text-center text-5xl text-blue-600 shadow-inner" id="grade-nota" min="0" max="20" />
+                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-4 text-center block">Nota</label>
+                    <input type="number" placeholder="00" className="w-full p-3 rounded-xl bg-slate-50 border-none font-black text-center text-2xl text-blue-600 shadow-inner outline-none" id="grade-nota" min="0" max="20" />
                   </div>
                 </div>
+
                 <button 
                   onClick={() => {
-                    const sid = (document.getElementById('grade-student') as HTMLSelectElement).value;
-                    const student = students.find(s => s.id === sid);
+                    const student = selectedPersonalStudent;
                     const mat = (document.getElementById('grade-materia') as HTMLSelectElement).value;
+                    const type = (document.getElementById('grade-type') as HTMLSelectElement).value;
                     const notaInput = (document.getElementById('grade-nota') as HTMLInputElement);
                     const nota = parseFloat(notaInput.value);
-                    if(student && !isNaN(nota)) {
-                      setGrades([{ id: Date.now().toString(), studentId: student.id, studentName: `${student.nombre} ${student.apellido}`, materia: mat, nota, fecha: new Date().toLocaleDateString() }, ...grades]);
+                    if(student && mat && !isNaN(nota)) {
+                      setGrades([{ 
+                        id: Date.now().toString(), 
+                        studentId: student.id, 
+                        studentName: `${student.nombre} ${student.apellido}`, 
+                        materia: `${mat} (${type})`, 
+                        nota, 
+                        fecha: new Date().toLocaleDateString() 
+                      }, ...grades]);
                       notaInput.value = '';
+                      setToast({ message: "Nota registrada con éxito", type: 'success' });
+                    } else {
+                      setToast({ message: "Por favor complete todos los campos", type: 'error' });
                     }
                   }}
-                  className="w-full text-white py-10 rounded-[2.5rem] font-black text-3xl transition-all uppercase tracking-tighter shadow-2xl"
+                  className="w-full text-white py-6 rounded-2xl font-black text-xl transition-all uppercase tracking-widest shadow-xl hover:scale-[1.02] active:scale-95"
                   style={{ backgroundColor: activeConfig.theme.primaryColor }}
                 >Registrar Nota</button>
                </div>
@@ -2823,27 +3085,31 @@ const App = () => {
           {/* Mi Panel Section */}
           {activeTab === 'mi-panel' && (
             <div className="animate-slide-up space-y-8">
-              <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
-                <div>
-                  <h2 className="text-4xl font-black text-slate-800 tracking-tight">{activeConfig.siteName}</h2>
-                  <p className="text-slate-500 font-medium">Mi Panel - Gestión de perfil, grados y horarios.</p>
+              <header className="flex flex-col md:flex-row justify-between items-center gap-6">
+                <div className="text-center md:text-left">
+                  <h2 className="text-3xl md:text-4xl font-black text-slate-800 tracking-tight">{activeConfig.siteName}</h2>
+                  <p className="text-slate-500 font-medium text-sm md:text-base">Mi Panel - Gestión de perfil, grados y horarios.</p>
                 </div>
-                <div className="flex flex-row bg-white p-2 rounded-2xl shadow-xl border border-slate-100 overflow-x-auto no-scrollbar">
+                <div className="flex flex-row bg-white p-1 rounded-xl shadow-lg border border-slate-100 overflow-x-auto no-scrollbar w-full md:w-auto justify-center gap-0.5">
                   <button 
                     onClick={() => setActivePanelSubTab('perfil')}
-                    className={`px-6 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all whitespace-nowrap ${activePanelSubTab === 'perfil' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:text-slate-600'}`}
+                    className={`flex-1 md:flex-none px-3 py-2 rounded-lg font-black text-[8px] uppercase tracking-widest transition-all whitespace-nowrap ${activePanelSubTab === 'perfil' ? 'bg-slate-900 text-white shadow-md' : 'text-slate-400 hover:text-slate-600'}`}
                   >Perfil</button>
                   <button 
                     onClick={() => setActivePanelSubTab('grados')}
-                    className={`px-6 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all whitespace-nowrap ${activePanelSubTab === 'grados' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:text-slate-600'}`}
+                    className={`flex-1 md:flex-none px-3 py-2 rounded-lg font-black text-[8px] uppercase tracking-widest transition-all whitespace-nowrap ${activePanelSubTab === 'grados' ? 'bg-slate-900 text-white shadow-md' : 'text-slate-400 hover:text-slate-600'}`}
                   >Grados</button>
                   <button 
                     onClick={() => setActivePanelSubTab('horarios')}
-                    className={`px-6 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all whitespace-nowrap ${activePanelSubTab === 'horarios' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:text-slate-600'}`}
+                    className={`flex-1 md:flex-none px-3 py-2 rounded-lg font-black text-[8px] uppercase tracking-widest transition-all whitespace-nowrap ${activePanelSubTab === 'horarios' ? 'bg-slate-900 text-white shadow-md' : 'text-slate-400 hover:text-slate-600'}`}
                   >Horarios</button>
                   <button 
+                    onClick={() => setActivePanelSubTab('profesores')}
+                    className={`flex-1 md:flex-none px-3 py-2 rounded-lg font-black text-[8px] uppercase tracking-widest transition-all whitespace-nowrap ${activePanelSubTab === 'profesores' ? 'bg-slate-900 text-white shadow-md' : 'text-slate-400 hover:text-slate-600'}`}
+                  >Profesores</button>
+                  <button 
                     onClick={() => setActivePanelSubTab('alerta')}
-                    className={`px-6 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all whitespace-nowrap ${activePanelSubTab === 'alerta' ? 'bg-red-600 text-white shadow-lg' : 'text-red-400 hover:text-red-600'}`}
+                    className={`flex-1 md:flex-none px-3 py-2 rounded-lg font-black text-[8px] uppercase tracking-widest transition-all whitespace-nowrap ${activePanelSubTab === 'alerta' ? 'bg-red-600 text-white shadow-md' : 'text-red-400 hover:text-red-600'}`}
                   >Alerta</button>
                 </div>
               </header>
@@ -2852,7 +3118,7 @@ const App = () => {
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                   {/* Profile Card */}
                   <div className="lg:col-span-1 space-y-8">
-                    <div className="bg-white p-10 rounded-[3.5rem] shadow-2xl border border-slate-200 text-center relative overflow-hidden">
+                    <div className="bg-white p-6 md:p-10 rounded-3xl md:rounded-[3.5rem] shadow-2xl border border-slate-200 text-center relative overflow-hidden">
                       <div className="absolute top-0 left-0 w-full h-32 bg-gradient-to-br from-blue-600 to-indigo-700"></div>
                       <div className="relative pt-12">
                         <div className="w-32 h-32 rounded-[2.5rem] bg-white p-1 mx-auto shadow-2xl relative z-10">
@@ -3176,6 +3442,206 @@ const App = () => {
                 </div>
               )}
 
+              {activePanelSubTab === 'profesores' && (
+                <div className="space-y-8">
+                  <div className="flex flex-col md:flex-row justify-between items-center gap-4">
+                    <div>
+                      <h3 className="text-2xl font-black text-slate-800 uppercase tracking-tighter">Gestión de Profesores</h3>
+                      <p className="text-slate-500 font-medium text-sm">Asigna cursos y grados a los docentes registrados.</p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                    {/* Teachers List */}
+                    <div className="lg:col-span-1 bg-white p-6 rounded-[2.5rem] shadow-2xl border border-slate-100 h-fit">
+                      <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-6 ml-2">Docentes Registrados</h4>
+                      <div className="space-y-3">
+                        {students.filter(s => s.rol === 'Docente').map(teacher => (
+                          <button
+                            key={teacher.id}
+                            onClick={() => setSelectedPersonalStudent(teacher)}
+                            className={`w-full p-4 rounded-2xl flex items-center gap-4 transition-all ${selectedPersonalStudent?.id === teacher.id ? 'bg-blue-600 text-white shadow-lg' : 'bg-slate-50 text-slate-700 hover:bg-slate-100'}`}
+                          >
+                            <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center font-black">
+                              {teacher.nombre[0]}{teacher.apellido[0]}
+                            </div>
+                            <div className="text-left">
+                              <p className="font-black text-sm uppercase tracking-tight leading-tight">{teacher.nombre} {teacher.apellido}</p>
+                              <p className="text-[10px] opacity-60 font-bold uppercase">{teacher.dni}</p>
+                            </div>
+                          </button>
+                        ))}
+                        {students.filter(s => s.rol === 'Docente').length === 0 && (
+                          <div className="text-center py-10 text-slate-400">
+                            <GraduationCap size={40} className="mx-auto mb-2 opacity-20" />
+                            <p className="font-bold text-xs uppercase">No hay docentes registrados</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Teacher Assignment */}
+                    <div className="lg:col-span-2 space-y-8">
+                      {selectedPersonalStudent && selectedPersonalStudent.rol === 'Docente' ? (
+                        <div className="bg-white p-6 md:p-10 rounded-[2.5rem] shadow-2xl border border-slate-100 animate-fade-in">
+                          <div className="flex items-center gap-6 mb-8">
+                            <div className="w-20 h-20 rounded-[2rem] bg-blue-50 flex items-center justify-center text-blue-600">
+                              <GraduationCap size={40} />
+                            </div>
+                            <div>
+                              <h4 className="text-2xl font-black text-slate-800 uppercase tracking-tight">{selectedPersonalStudent.nombre} {selectedPersonalStudent.apellido}</h4>
+                              <span className="px-3 py-1 bg-blue-100 text-blue-600 rounded-full text-[10px] font-black uppercase tracking-widest">Docente Activo</span>
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                            {/* Course Assignment */}
+                            <div className="space-y-4">
+                              <h5 className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Cursos Asignados</h5>
+                              <div className="space-y-2">
+                                {courses.filter(c => c.teacherId === selectedPersonalStudent.id).map(course => (
+                                  <div key={course.id} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100">
+                                    <div className="flex items-center gap-3">
+                                      <div className="w-3 h-3 rounded-full" style={{ backgroundColor: course.color }}></div>
+                                      <span className="font-bold text-slate-700 text-xs uppercase">{course.name}</span>
+                                    </div>
+                                    <button 
+                                      onClick={() => setCourses(courses.map(c => c.id === course.id ? {...c, teacherId: undefined} : c))}
+                                      className="p-1.5 text-red-400 hover:text-red-600 transition-all"
+                                    ><X size={14} /></button>
+                                  </div>
+                                ))}
+                                <div className="pt-2">
+                                  <select 
+                                    onChange={(e) => {
+                                      const cid = e.target.value;
+                                      if(cid) {
+                                        setCourses(courses.map(c => c.id === cid ? {...c, teacherId: selectedPersonalStudent.id} : c));
+                                        e.target.value = '';
+                                      }
+                                    }}
+                                    className="w-full p-3 rounded-xl bg-slate-50 border-2 border-slate-100 font-bold text-xs uppercase outline-none focus:border-blue-500"
+                                  >
+                                    <option value="">+ Asignar Curso</option>
+                                    {courses.filter(c => c.teacherId !== selectedPersonalStudent.id).map(c => (
+                                      <option key={c.id} value={c.id}>{c.name}</option>
+                                    ))}
+                                  </select>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Grade Assignment */}
+                            <div className="space-y-4">
+                              <h5 className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Grados que Imparte</h5>
+                              <div className="flex flex-wrap gap-2">
+                                {gradeLevels.map(gl => {
+                                  // This is a mock logic for assignment, in a real app we'd have a separate table
+                                  const isAssigned = false; 
+                                  return (
+                                    <button 
+                                      key={gl.id}
+                                      className={`px-3 py-2 rounded-xl font-bold text-[10px] uppercase tracking-widest transition-all ${isAssigned ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-400 hover:bg-slate-200'}`}
+                                    >
+                                      {gl.nombre} "{gl.seccion}"
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                              <p className="text-[9px] text-slate-400 font-bold uppercase italic mt-2">* Haz clic para asignar/quitar grados.</p>
+                            </div>
+                          </div>
+
+                          {/* Teacher Schedule View */}
+                          <div className="mt-10 pt-10 border-t border-slate-100 space-y-6">
+                            <div className="flex justify-between items-center">
+                              <h5 className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Horario del Docente</h5>
+                              <button 
+                                onClick={() => {
+                                  // Simple PDF download simulation using print
+                                  const printContent = document.getElementById('teacher-schedule-print');
+                                  if(printContent) {
+                                    const win = window.open('', '', 'height=700,width=900');
+                                    win?.document.write('<html><head><title>Horario del Docente</title>');
+                                    win?.document.write('<link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">');
+                                    win?.document.write('</head><body class="p-10">');
+                                    win?.document.write(printContent.innerHTML);
+                                    win?.document.write('</body></html>');
+                                    win?.document.close();
+                                    setTimeout(() => {
+                                      win?.print();
+                                      win?.close();
+                                    }, 500);
+                                  }
+                                }}
+                                className="flex items-center gap-2 px-4 py-2 bg-slate-900 text-white rounded-xl font-black text-[10px] uppercase tracking-widest shadow-lg hover:bg-slate-800 transition-all"
+                              >
+                                <Download size={14} /> Descargar PDF
+                              </button>
+                            </div>
+
+                            <div id="teacher-schedule-print" className="bg-slate-50 p-6 rounded-3xl border border-slate-100 overflow-x-auto no-scrollbar">
+                              <div className="min-w-[600px]">
+                                <div className="grid grid-cols-8 gap-1 mb-2">
+                                  <div className="p-2"></div>
+                                  {['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'].map(dia => (
+                                    <div key={dia} className="text-center font-black text-[8px] uppercase tracking-widest text-slate-400">{dia}</div>
+                                  ))}
+                                </div>
+                                <div className="space-y-1">
+                                  {timeSlots.map(slot => (
+                                    <div key={slot.id} className="grid grid-cols-8 gap-1">
+                                      <div className="flex items-center justify-center bg-white rounded-lg p-1 border border-slate-100">
+                                        <span className="font-black text-[8px] text-slate-400">{slot.start}</span>
+                                      </div>
+                                      {['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'].map(dia => {
+                                        // Find courses assigned to this teacher that are scheduled at this time
+                                        const teacherCourses = courses.filter(c => c.teacherId === selectedPersonalStudent.id);
+                                        const sch = schedules.find(s => 
+                                          s.dia === dia && 
+                                          s.inicio === slot.start && 
+                                          teacherCourses.some(tc => tc.name === s.materia)
+                                        );
+                                        return (
+                                          <div 
+                                            key={dia}
+                                            className={`min-h-[40px] rounded-lg flex items-center justify-center p-1 text-center border ${sch ? 'bg-white shadow-sm' : 'bg-slate-100/50 border-transparent'}`}
+                                            style={sch ? { 
+                                              borderColor: courses.find(c => c.name === sch.materia)?.color + '30',
+                                              color: courses.find(c => c.name === sch.materia)?.color
+                                            } : {}}
+                                          >
+                                            {sch && (
+                                              <div className="flex flex-col">
+                                                <span className="font-black text-[7px] uppercase leading-tight">{sch.materia}</span>
+                                                <span className="text-[6px] opacity-60 font-bold">
+                                                  {gradeLevels.find(gl => gl.id === sch.targetId)?.nombre || 'Gral'}
+                                                </span>
+                                              </div>
+                                            )}
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="bg-slate-50 rounded-[2.5rem] border-2 border-dashed border-slate-200 h-full flex flex-col items-center justify-center p-10 text-center">
+                          <div className="w-20 h-20 rounded-full bg-white shadow-xl flex items-center justify-center text-slate-300 mb-6">
+                            <GraduationCap size={40} />
+                          </div>
+                          <h4 className="text-xl font-black text-slate-400 uppercase tracking-widest">Selecciona un Docente</h4>
+                          <p className="text-slate-400 text-xs font-bold uppercase mt-2">Para gestionar sus cursos y grados asignados.</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
               {activePanelSubTab === 'alerta' && (
                 <div className="bg-white p-10 rounded-[3.5rem] shadow-2xl border border-slate-200 space-y-8 animate-fade-in">
                   <div className="flex justify-between items-center">
@@ -3262,19 +3728,220 @@ const App = () => {
                 <div className="space-y-8">
                   {currentUser?.permissions.includes('horarios') ? (
                     <>
-                      <div className="flex justify-between items-center">
-                        <h3 className="text-2xl font-black text-slate-800 uppercase tracking-tighter">Gestión de Horarios</h3>
-                        <div className="flex bg-slate-100 p-1 rounded-xl">
-                          <button 
-                            onClick={() => setActiveHorariosSubTab('clases')}
-                            className={`px-6 py-3 rounded-lg font-black text-[10px] uppercase tracking-widest transition-all ${activeHorariosSubTab === 'clases' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400'}`}
-                          >Clases</button>
+                      <div className="flex flex-col md:flex-row justify-between items-center gap-4">
+                        <h3 className="text-2xl font-black text-slate-800 uppercase tracking-tighter text-center md:text-left">Gestión de Horarios</h3>
+                        <div className="flex bg-slate-100 p-1 rounded-xl overflow-x-auto no-scrollbar w-full md:w-auto">
                           <button 
                             onClick={() => setActiveHorariosSubTab('turnos')}
-                            className={`px-6 py-3 rounded-lg font-black text-[10px] uppercase tracking-widest transition-all ${activeHorariosSubTab === 'turnos' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400'}`}
-                          >Turnos (Ingreso/Salida)</button>
+                            className={`flex-1 md:flex-none px-4 py-2.5 rounded-lg font-black text-[9px] uppercase tracking-widest transition-all whitespace-nowrap ${activeHorariosSubTab === 'turnos' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400'}`}
+                          >Turnos</button>
+                          <button 
+                            onClick={() => setActiveHorariosSubTab('config')}
+                            className={`flex-1 md:flex-none px-4 py-2.5 rounded-lg font-black text-[9px] uppercase tracking-widest transition-all whitespace-nowrap ${activeHorariosSubTab === 'config' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400'}`}
+                          >Horas</button>
+                          <button 
+                            onClick={() => setActiveHorariosSubTab('materias')}
+                            className={`flex-1 md:flex-none px-4 py-2.5 rounded-lg font-black text-[9px] uppercase tracking-widest transition-all whitespace-nowrap ${activeHorariosSubTab === 'materias' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400'}`}
+                          >Materias</button>
+                          <button 
+                            onClick={() => setActiveHorariosSubTab('creador')}
+                            className={`flex-1 md:flex-none px-4 py-2.5 rounded-lg font-black text-[9px] uppercase tracking-widest transition-all whitespace-nowrap ${activeHorariosSubTab === 'creador' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400'}`}
+                          >Creador</button>
                         </div>
                       </div>
+
+                      {activeHorariosSubTab === 'materias' && (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                          <div className="bg-white p-6 md:p-10 rounded-[2.5rem] shadow-2xl border border-slate-100">
+                            <div className="flex justify-between items-center mb-6">
+                              <h3 className="text-xl font-black uppercase tracking-widest text-slate-800">Materias / Cursos</h3>
+                              <button 
+                                onClick={() => setEditingCourse({id: Date.now().toString(), name: '', color: '#3b82f6'})}
+                                className="p-3 bg-blue-600 text-white rounded-xl shadow-lg hover:bg-blue-700 transition-all"
+                              ><Plus size={20} /></button>
+                            </div>
+                            <div className="space-y-3">
+                              {courses.map(course => (
+                                <div key={course.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                                  <div className="flex items-center gap-4">
+                                    <div className="w-4 h-4 rounded-full" style={{ backgroundColor: course.color }}></div>
+                                    <span className="font-black text-slate-700 uppercase text-xs tracking-widest">{course.name}</span>
+                                  </div>
+                                  <div className="flex gap-2">
+                                    <button onClick={() => setEditingCourse(course)} className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-all"><Edit size={16} /></button>
+                                    <button onClick={() => setCourses(courses.filter(c => c.id !== course.id))} className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-all"><Trash2 size={16} /></button>
+                                  </div>
+                                </div>
+                              ))}
+                              {courses.length === 0 && <p className="text-center text-slate-400 font-bold py-10">No hay materias registradas</p>}
+                            </div>
+                          </div>
+
+                          <div className="bg-white p-6 md:p-10 rounded-[2.5rem] shadow-2xl border border-slate-100">
+                            <h3 className="text-xl font-black uppercase tracking-widest text-slate-800 mb-6">Tipos de Nota</h3>
+                            <div className="space-y-3">
+                              {gradeTypes.map(type => (
+                                <div key={type.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                                  <span className="font-black text-slate-700 uppercase text-xs tracking-widest">{type.name}</span>
+                                  <button onClick={() => setGradeTypes(gradeTypes.filter(t => t.id !== type.id))} className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-all"><Trash2 size={16} /></button>
+                                </div>
+                              ))}
+                              <div className="pt-4 flex gap-2">
+                                <input id="new-grade-type" placeholder="Nuevo tipo..." className="flex-1 p-3 rounded-xl bg-slate-50 border border-slate-100 font-bold text-sm outline-none" />
+                                <button 
+                                  onClick={() => {
+                                    const input = document.getElementById('new-grade-type') as HTMLInputElement;
+                                    if(input.value) {
+                                      setGradeTypes([...gradeTypes, {id: Date.now().toString(), name: input.value}]);
+                                      input.value = '';
+                                    }
+                                  }}
+                                  className="p-3 bg-slate-900 text-white rounded-xl shadow-lg"
+                                ><Plus size={20} /></button>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {activeHorariosSubTab === 'config' && (
+                        <div className="bg-white p-6 md:p-10 rounded-[2.5rem] shadow-2xl border border-slate-100 max-w-2xl">
+                          <div className="flex justify-between items-center mb-8">
+                            <div>
+                              <h3 className="text-xl font-black uppercase tracking-widest text-slate-800">Horas de Clase</h3>
+                              <p className="text-slate-400 text-[10px] font-bold uppercase mt-1">Define los bloques horarios para el cronograma</p>
+                            </div>
+                            <button 
+                              onClick={() => setEditingTimeSlot({id: Date.now().toString(), start: '08:00', end: '09:00'})}
+                              className="px-6 py-3 bg-blue-600 text-white rounded-xl font-black text-[10px] uppercase tracking-widest shadow-lg hover:bg-blue-700 transition-all"
+                            >Agregar Hora</button>
+                          </div>
+                          <div className="space-y-3">
+                            {timeSlots.map((slot, idx) => (
+                              <div key={slot.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100 hover:border-blue-200 transition-all group">
+                                <div className="flex items-center gap-6">
+                                  <span className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center font-black text-slate-500 text-xs">{idx + 1}</span>
+                                  <div className="flex items-center gap-3">
+                                    <span className="font-black text-slate-700 text-lg">{slot.start}</span>
+                                    <span className="text-slate-300">—</span>
+                                    <span className="font-black text-slate-700 text-lg">{slot.end}</span>
+                                  </div>
+                                </div>
+                                <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-all">
+                                  <button onClick={() => setEditingTimeSlot(slot)} className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg"><Edit size={16} /></button>
+                                  <button onClick={() => setTimeSlots(timeSlots.filter(s => s.id !== slot.id))} className="p-2 text-red-600 hover:bg-red-50 rounded-lg"><Trash2 size={16} /></button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {activeHorariosSubTab === 'creador' && (
+                        <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
+                          {/* Sidebar: Courses */}
+                          <div className="lg:col-span-1 space-y-6">
+                            <div className="bg-white p-6 rounded-[2.5rem] shadow-2xl border border-slate-100">
+                              <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4 ml-2">Materias Disponibles</h4>
+                              <div className="space-y-2">
+                                {courses.map(course => (
+                                  <div 
+                                    key={course.id}
+                                    draggable
+                                    onDragStart={() => setDraggedCourse(course)}
+                                    className="p-3 rounded-xl border-2 border-slate-50 bg-slate-50 cursor-move hover:border-blue-200 transition-all flex items-center gap-3 group"
+                                  >
+                                    <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: course.color }}></div>
+                                    <span className="font-black text-[10px] uppercase tracking-tight text-slate-600 group-hover:text-blue-600">{course.name}</span>
+                                  </div>
+                                ))}
+                                {courses.length === 0 && <p className="text-[9px] text-slate-400 font-bold uppercase text-center py-4 italic">Crea materias primero</p>}
+                              </div>
+                            </div>
+
+                            <div className="bg-white p-6 rounded-[2.5rem] shadow-2xl border border-slate-100">
+                              <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4 ml-2">Filtros de Horario</h4>
+                              <div className="space-y-4">
+                                <select className="w-full p-3 rounded-xl bg-slate-50 border-none font-bold text-xs uppercase outline-none" id="schedule-grade-filter">
+                                  <option value="">Seleccionar Grado</option>
+                                  {gradeLevels.map(gl => <option key={gl.id} value={gl.id}>{gl.nombre} "{gl.seccion}"</option>)}
+                                </select>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Main: Schedule Grid */}
+                          <div className="lg:col-span-3 bg-white p-6 md:p-10 rounded-[2.5rem] shadow-2xl border border-slate-100 overflow-x-auto no-scrollbar">
+                            <div className="min-w-[800px]">
+                              <div className="grid grid-cols-8 gap-2 mb-4">
+                                <div className="p-2"></div>
+                                {['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'].map(dia => (
+                                  <div key={dia} className="text-center font-black text-[10px] uppercase tracking-widest text-slate-400">{dia}</div>
+                                ))}
+                              </div>
+                              <div className="space-y-2">
+                                {timeSlots.map(slot => (
+                                  <div key={slot.id} className="grid grid-cols-8 gap-2">
+                                    <div className="flex items-center justify-center bg-slate-50 rounded-xl p-2">
+                                      <span className="font-black text-[10px] text-slate-400">{slot.start}</span>
+                                    </div>
+                                    {['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'].map(dia => {
+                                      const targetId = (document.getElementById('schedule-grade-filter') as HTMLSelectElement)?.value;
+                                      const sch = schedules.find(s => s.dia === dia && s.inicio === slot.start && s.targetId === targetId);
+                                      return (
+                                        <div 
+                                          key={dia}
+                                          onDragOver={(e) => e.preventDefault()}
+                                          onDrop={() => {
+                                            if(draggedCourse && targetId) {
+                                              // Check for conflicts
+                                              const conflict = schedules.find(s => s.dia === dia && s.inicio === slot.start && s.targetId === targetId);
+                                              if(conflict) {
+                                                setToast({ message: "Ya existe una clase en este horario", type: 'error' });
+                                                return;
+                                              }
+                                              setSchedules([...schedules, {
+                                                id: Date.now().toString(),
+                                                dia,
+                                                inicio: slot.start,
+                                                fin: slot.end,
+                                                materia: draggedCourse.name,
+                                                type: 'clase',
+                                                targetId
+                                              }]);
+                                              setToast({ message: "Horario actualizado", type: 'success' });
+                                            }
+                                          }}
+                                          className={`min-h-[60px] rounded-xl border-2 border-dashed transition-all flex items-center justify-center p-2 relative group ${sch ? 'border-transparent' : 'border-slate-100 hover:border-blue-200 hover:bg-blue-50/30'}`}
+                                        >
+                                          {sch ? (
+                                            <div 
+                                              className="w-full h-full rounded-lg flex flex-col items-center justify-center text-center p-1 shadow-sm border"
+                                              style={{ 
+                                                backgroundColor: courses.find(c => c.name === sch.materia)?.color + '15' || '#f1f5f9',
+                                                borderColor: courses.find(c => c.name === sch.materia)?.color + '30' || '#e2e8f0',
+                                                color: courses.find(c => c.name === sch.materia)?.color || '#64748b'
+                                              }}
+                                            >
+                                              <span className="font-black text-[8px] uppercase leading-tight">{sch.materia}</span>
+                                              <button 
+                                                onClick={() => setSchedules(schedules.filter(s => s.id !== sch.id))}
+                                                className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 p-1 bg-white rounded-full shadow-md text-red-500 hover:scale-110 transition-all"
+                                              ><X size={10} /></button>
+                                            </div>
+                                          ) : (
+                                            <Plus size={14} className="text-slate-200 group-hover:text-blue-300" />
+                                          )}
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      )}
 
                       {activeHorariosSubTab === 'clases' && (
                         <div className="space-y-6">
@@ -3334,15 +4001,30 @@ const App = () => {
                                     </div>
                                     <h4 className="text-2xl font-black text-slate-800 uppercase tracking-tight">{shift.nombre}</h4>
                                   </div>
-                                  <button 
-                                    onClick={() => {
-                                      setShifts(shifts.filter(s => s.id !== shift.id));
-                                      setToast({ message: "Turno eliminado", type: 'success' });
-                                    }}
-                                    className="p-4 text-rose-500 hover:bg-rose-500 hover:text-white rounded-2xl transition-all bg-rose-50"
-                                  >
-                                    <Trash2 size={20} />
-                                  </button>
+                                  <div className="flex gap-2">
+                                    <button 
+                                      onClick={() => {
+                                        // We need a way to edit shifts. I'll use the same modal but pre-fill it.
+                                        // I'll add a state for editingShift.
+                                        setEditingShift(shift);
+                                        setPanelModalType('shift');
+                                      }}
+                                      className="p-4 text-blue-500 hover:bg-blue-500 hover:text-white rounded-2xl transition-all bg-blue-50"
+                                    >
+                                      <Edit size={20} />
+                                    </button>
+                                    <button 
+                                      onClick={() => {
+                                        if(confirm('¿Eliminar este turno?')) {
+                                          setShifts(shifts.filter(s => s.id !== shift.id));
+                                          setToast({ message: "Turno eliminado", type: 'success' });
+                                        }
+                                      }}
+                                      className="p-4 text-rose-500 hover:bg-rose-500 hover:text-white rounded-2xl transition-all bg-rose-50"
+                                    >
+                                      <Trash2 size={20} />
+                                    </button>
+                                  </div>
                                 </div>
                                 <div className="grid grid-cols-2 gap-6">
                                   <div className="p-6 rounded-3xl bg-emerald-50 border border-emerald-100 relative overflow-hidden">
@@ -3391,16 +4073,16 @@ const App = () => {
                   <h1 className="text-4xl font-black text-slate-800 tracking-tight">Configuración</h1>
                   <p className="text-slate-500 text-lg">Administración global del sistema {activeConfig.siteName}.</p>
                 </div>
-                <div className="flex bg-white p-2 rounded-2xl shadow-xl border border-slate-100">
+                <div className="flex flex-col sm:flex-row bg-white p-2 rounded-2xl shadow-xl border border-slate-100 w-full sm:w-auto">
                   <button 
                     onClick={() => setActiveConfigSubTab('usuarios')}
-                    className={`px-8 py-4 rounded-xl font-black text-xs uppercase tracking-widest transition-all ${activeConfigSubTab === 'usuarios' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:text-slate-600'}`}
+                    className={`px-4 sm:px-8 py-3 sm:py-4 rounded-xl font-black text-[10px] sm:text-xs uppercase tracking-widest transition-all ${activeConfigSubTab === 'usuarios' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:text-slate-600'}`}
                   >
                     Usuarios
                   </button>
                   <button 
                     onClick={() => setActiveConfigSubTab('sistema')}
-                    className={`px-8 py-4 rounded-xl font-black text-xs uppercase tracking-widest transition-all ${activeConfigSubTab === 'sistema' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:text-slate-600'}`}
+                    className={`px-4 sm:px-8 py-3 sm:py-4 rounded-xl font-black text-[10px] sm:text-xs uppercase tracking-widest transition-all ${activeConfigSubTab === 'sistema' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:text-slate-600'}`}
                   >
                     Sistema
                   </button>
@@ -3409,13 +4091,13 @@ const App = () => {
 
               {activeConfigSubTab === 'usuarios' && (
                 <div className="space-y-8">
-                  <div className="flex justify-between items-center">
-                    <h3 className="text-2xl font-black text-slate-800 uppercase tracking-tighter flex items-center gap-3">
+                  <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
+                    <h3 className="text-xl sm:text-2xl font-black text-slate-800 uppercase tracking-tighter flex items-center gap-3">
                       <Shield className="text-blue-600" /> Gestión de Usuarios
                     </h3>
                     <button 
                       onClick={() => { setEditingUser(null); setIsUserModalOpen(true); }}
-                      className="bg-blue-600 text-white px-8 py-4 rounded-2xl font-black flex items-center gap-3 hover:bg-blue-700 transition-all shadow-xl uppercase tracking-widest text-xs"
+                      className="bg-blue-600 text-white px-8 py-4 rounded-2xl font-black flex items-center justify-center gap-3 hover:bg-blue-700 transition-all shadow-xl uppercase tracking-widest text-xs w-full sm:w-auto"
                     >
                       <Plus size={20} /> NUEVO USUARIO
                     </button>
@@ -3470,7 +4152,7 @@ const App = () => {
 
                           <div className="space-y-2">
                             <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">Permisos de Acceso</p>
-                            <div className="flex flex-wrap gap-2">
+                            <div className="flex flex-wrap gap-2 max-h-32 overflow-y-auto p-1 no-scrollbar">
                               {['dashboard', 'estudiantes', 'asistencia', 'reportes', 'calificaciones', 'mi-panel', 'config', 'horarios'].map(perm => (
                                 <button
                                   key={perm}
@@ -3514,13 +4196,13 @@ const App = () => {
 
               {activeConfigSubTab === 'sistema' && (
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
-                  <div className="bg-white rounded-[3rem] p-10 shadow-2xl border border-slate-100 space-y-10">
-                    <div className="flex items-center gap-4">
+                  <div className="bg-white rounded-3xl md:rounded-[3rem] p-6 md:p-10 shadow-2xl border border-slate-100 space-y-10">
+                    <div className="flex flex-col sm:flex-row items-center gap-4">
                       <div className="p-3 bg-amber-50 text-amber-600 rounded-2xl"><Palette size={24} /></div>
-                      <h3 className="text-xl font-black text-slate-800 uppercase">Personalización Global</h3>
+                      <h3 className="text-xl font-black text-slate-800 uppercase text-center sm:text-left">Personalización Global</h3>
                       <button 
                         onClick={() => setPanelModalType('siteConfig')}
-                        className="ml-auto px-6 py-3 bg-blue-50 text-blue-600 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-blue-100 transition-all flex items-center gap-2"
+                        className="sm:ml-auto w-full sm:w-auto px-6 py-3 bg-blue-50 text-blue-600 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-blue-100 transition-all flex items-center justify-center gap-2"
                       >
                         <Palette size={14} /> Temas y Logo
                       </button>
@@ -3972,10 +4654,10 @@ const App = () => {
 
       {panelModalType === 'shift' && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-6 bg-slate-950/70 backdrop-blur-xl animate-fade-in">
-          <div className="bg-white rounded-[4rem] shadow-2xl w-full max-w-2xl overflow-hidden animate-slide-up border border-white/20">
-            <div className="p-10 border-b border-slate-100 flex justify-between items-center bg-indigo-700 text-white">
-              <h2 className="text-2xl font-black uppercase tracking-widest">Configurar Turno</h2>
-              <button onClick={() => setPanelModalType(null)} className="hover:bg-white/20 p-3 rounded-full transition-all"><X size={24} /></button>
+          <div className="bg-white rounded-[2rem] md:rounded-[4rem] shadow-2xl w-full max-w-2xl overflow-hidden animate-slide-up border border-white/20">
+            <div className="p-6 md:p-10 border-b border-slate-100 flex justify-between items-center bg-indigo-700 text-white">
+              <h2 className="text-xl md:text-2xl font-black uppercase tracking-widest">{editingShift ? 'Editar Turno' : 'Configurar Turno'}</h2>
+              <button onClick={() => { setPanelModalType(null); setEditingShift(null); }} className="hover:bg-white/20 p-3 rounded-full transition-all"><X size={24} /></button>
             </div>
             <form onSubmit={(e: any) => {
               e.preventDefault();
@@ -3985,31 +4667,40 @@ const App = () => {
               const et = e.target.et.value;
               const st = e.target.st.value;
               if(nombre && em && sm) {
-                setShifts([...shifts, { id: Date.now().toString(), nombre, entradaMañana: em, salidaMañana: sm, entradaTarde: et || '-', salidaTarde: st || '-' }]);
+                if(editingShift) {
+                  setShifts(shifts.map(s => s.id === editingShift.id ? { ...s, nombre, entradaMañana: em, salidaMañana: sm, entradaTarde: et || '-', salidaTarde: st || '-' } : s));
+                  setToast({ message: "Turno actualizado", type: 'success' });
+                } else {
+                  setShifts([...shifts, { id: Date.now().toString(), nombre, entradaMañana: em, salidaMañana: sm, entradaTarde: et || '-', salidaTarde: st || '-' }]);
+                  setToast({ message: "Turno creado", type: 'success' });
+                }
                 setPanelModalType(null);
+                setEditingShift(null);
               }
-            }} className="p-10 space-y-8">
+            }} className="p-6 md:p-10 space-y-6 md:space-y-8">
               <div className="space-y-2">
                 <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Nombre del Turno</label>
-                <input name="nombre" required placeholder="Ej. Mañana / Tarde / Completo" className="w-full p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-indigo-500 font-black text-lg outline-none transition-all" />
+                <input name="nombre" required defaultValue={editingShift?.nombre || ''} placeholder="Ej. Mañana / Tarde / Completo" className="w-full p-4 md:p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-indigo-500 font-black text-base md:text-lg outline-none transition-all" />
               </div>
-              <div className="grid grid-cols-2 gap-8">
-                <div className="space-y-4 p-6 rounded-3xl bg-emerald-50 border border-emerald-100">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-8">
+                <div className="space-y-4 p-4 md:p-6 rounded-3xl bg-emerald-50 border border-emerald-100">
                   <p className="text-[10px] font-black text-emerald-600 uppercase tracking-widest">Horario Mañana</p>
                   <div className="grid grid-cols-2 gap-4">
-                    <input name="em" required placeholder="Ingreso" className="w-full p-4 rounded-xl bg-white border border-emerald-200 font-bold text-sm outline-none" />
-                    <input name="sm" required placeholder="Salida" className="w-full p-4 rounded-xl bg-white border border-emerald-200 font-bold text-sm outline-none" />
+                    <input name="em" required defaultValue={editingShift?.entradaMañana || ''} placeholder="Ingreso" className="w-full p-3 md:p-4 rounded-xl bg-white border border-emerald-200 font-bold text-sm outline-none" />
+                    <input name="sm" required defaultValue={editingShift?.salidaMañana || ''} placeholder="Salida" className="w-full p-3 md:p-4 rounded-xl bg-white border border-emerald-200 font-bold text-sm outline-none" />
                   </div>
                 </div>
-                <div className="space-y-4 p-6 rounded-3xl bg-amber-50 border border-amber-100">
+                <div className="space-y-4 p-4 md:p-6 rounded-3xl bg-amber-50 border border-amber-100">
                   <p className="text-[10px] font-black text-amber-600 uppercase tracking-widest">Horario Tarde</p>
                   <div className="grid grid-cols-2 gap-4">
-                    <input name="et" placeholder="Ingreso" className="w-full p-4 rounded-xl bg-white border border-amber-200 font-bold text-sm outline-none" />
-                    <input name="st" placeholder="Salida" className="w-full p-4 rounded-xl bg-white border border-amber-200 font-bold text-sm outline-none" />
+                    <input name="et" defaultValue={editingShift?.entradaTarde || ''} placeholder="Ingreso" className="w-full p-3 md:p-4 rounded-xl bg-white border border-amber-200 font-bold text-sm outline-none" />
+                    <input name="st" defaultValue={editingShift?.salidaTarde || ''} placeholder="Salida" className="w-full p-3 md:p-4 rounded-xl bg-white border border-amber-200 font-bold text-sm outline-none" />
                   </div>
                 </div>
               </div>
-              <button type="submit" className="w-full py-5 bg-indigo-600 text-white rounded-2xl font-black uppercase tracking-widest text-xs shadow-xl hover:bg-indigo-700 transition-all">Guardar Configuración de Turno</button>
+              <button type="submit" className="w-full py-4 md:py-5 bg-indigo-600 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] md:text-xs shadow-xl hover:bg-indigo-700 transition-all">
+                {editingShift ? 'Actualizar Turno' : 'Guardar Configuración de Turno'}
+              </button>
             </form>
           </div>
         </div>
@@ -4160,20 +4851,20 @@ const App = () => {
           }
         };
         return (
-          <div className="fixed inset-0 z-[110] flex items-center justify-center p-6 bg-slate-950/80 backdrop-blur-xl animate-fade-in">
-            <div className="bg-white rounded-[4rem] shadow-2xl w-full max-w-2xl overflow-hidden animate-slide-up border-8 border-white">
-              <div className="p-10 text-white flex justify-between items-center" style={{ backgroundColor: targetConfig.theme.primaryColor }}>
-                <div className="flex items-center gap-4">
-                  <div className="p-3 bg-white/10 rounded-2xl border border-white/10"><Palette size={24} /></div>
+          <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 md:p-6 bg-slate-950/80 backdrop-blur-xl animate-fade-in">
+            <div className="bg-white rounded-[2rem] md:rounded-[4rem] shadow-2xl w-full max-w-2xl overflow-hidden animate-slide-up border-4 md:border-8 border-white">
+              <div className="p-6 md:p-10 text-white flex justify-between items-center" style={{ backgroundColor: targetConfig.theme.primaryColor }}>
+                <div className="flex items-center gap-3 md:gap-4">
+                  <div className="p-2 md:p-3 bg-white/10 rounded-xl md:rounded-2xl border border-white/10"><Palette size={20} /></div>
                   <div>
-                    <h2 className="text-2xl font-black uppercase tracking-widest">{configTargetUser ? 'Personalizar Usuario' : 'Personalizar Sitio'}</h2>
-                    <p className="text-white/60 text-[10px] font-bold uppercase mt-1">{configTargetUser ? (configTargetUser.fullName || configTargetUser.username) : 'Configuración Global'}</p>
+                    <h2 className="text-lg md:text-2xl font-black uppercase tracking-widest leading-tight">{configTargetUser ? 'Personalizar Usuario' : 'Personalizar Sitio'}</h2>
+                    <p className="text-white/60 text-[8px] md:text-[10px] font-bold uppercase mt-1">{configTargetUser ? (configTargetUser.fullName || configTargetUser.username) : 'Configuración Global'}</p>
                   </div>
                 </div>
-                <button onClick={() => { setPanelModalType(null); setConfigTargetUser(null); }} className="hover:bg-white/20 p-3 rounded-full transition-all"><X size={24} /></button>
+                <button onClick={() => { setPanelModalType(null); setConfigTargetUser(null); }} className="hover:bg-white/20 p-2 rounded-full transition-all"><X size={20} /></button>
               </div>
               
-              <div className="p-10 space-y-8 max-h-[70vh] overflow-y-auto custom-scrollbar">
+              <div className="p-6 md:p-10 space-y-6 md:space-y-8 max-h-[70vh] overflow-y-auto custom-scrollbar">
                 {/* Site Name and Slogan */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div className="space-y-2">
@@ -4566,58 +5257,58 @@ const App = () => {
       )}
 
       {isUserModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-slate-950/70 backdrop-blur-xl animate-fade-in">
-          <div className="bg-white rounded-[4rem] shadow-2xl w-full max-w-2xl overflow-hidden animate-slide-up border border-white/20">
-            <div className="p-10 border-b border-slate-100 flex justify-between items-center bg-slate-900 text-white">
+        <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 md:p-6 bg-slate-950/70 backdrop-blur-xl animate-fade-in">
+          <div className="bg-white rounded-[2.5rem] md:rounded-[4rem] shadow-2xl w-full max-w-lg md:max-w-2xl overflow-hidden animate-slide-up border border-white/20 max-h-[90vh] flex flex-col">
+            <div className="p-6 md:p-10 border-b border-slate-100 flex justify-between items-center bg-slate-900 text-white shrink-0">
               <div>
-                <h2 className="text-3xl font-black uppercase tracking-widest">{editingUser ? 'Editar Usuario' : 'Nuevo Usuario'}</h2>
-                <p className="text-slate-400 text-[10px] font-bold uppercase mt-2">Gestión de credenciales y datos personales</p>
+                <h2 className="text-xl md:text-3xl font-black uppercase tracking-widest">{editingUser ? 'Editar Usuario' : 'Nuevo Usuario'}</h2>
+                <p className="text-slate-400 text-[8px] md:text-[10px] font-bold uppercase mt-1 md:mt-2">Gestión de credenciales y datos personales</p>
               </div>
-              <button onClick={() => setIsUserModalOpen(false)} className="hover:bg-white/20 p-4 rounded-full transition-all"><X size={24} /></button>
+              <button onClick={() => setIsUserModalOpen(false)} className="hover:bg-white/20 p-2 md:p-4 rounded-full transition-all"><X size={20} /></button>
             </div>
-            <form onSubmit={handleSaveUser} className="p-10 space-y-6 bg-white">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <form onSubmit={handleSaveUser} className="p-6 md:p-10 space-y-4 md:space-y-6 bg-white overflow-y-auto no-scrollbar">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
                 <div className="space-y-2">
                   <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Nombre de Usuario</label>
-                  <input name="username" defaultValue={editingUser?.username} required placeholder="Ej. admin_stnj" className="w-full p-4 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-lg outline-none transition-all" />
+                  <input name="username" defaultValue={editingUser?.username} required placeholder="Ej. admin_stnj" className="w-full p-3 md:p-4 rounded-xl md:rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-sm md:text-lg outline-none transition-all" />
                 </div>
                 <div className="space-y-2">
                   <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Contraseña</label>
                   <div className="relative">
-                    <Lock size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-                    <input name="password" type="text" defaultValue={editingUser?.password} required placeholder="Clave de acceso" className="w-full pl-12 p-4 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-lg outline-none transition-all" />
+                    <Lock size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input name="password" type="text" defaultValue={editingUser?.password} required placeholder="Clave de acceso" className="w-full pl-10 md:pl-12 p-3 md:p-4 rounded-xl md:rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-sm md:text-lg outline-none transition-all" />
                   </div>
                 </div>
                 <div className="space-y-2 md:col-span-2">
                   <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Nombres Completos</label>
-                  <input name="fullName" defaultValue={editingUser?.fullName} placeholder="Nombre y Apellidos" className="w-full p-4 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-lg outline-none transition-all" />
+                  <input name="fullName" defaultValue={editingUser?.fullName} placeholder="Nombre y Apellidos" className="w-full p-3 md:p-4 rounded-xl md:rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-sm md:text-lg outline-none transition-all" />
                 </div>
                 <div className="space-y-2">
                   <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">WhatsApp</label>
                   <div className="relative">
-                    <Phone size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-                    <input name="whatsapp" defaultValue={editingUser?.whatsapp} placeholder="999 999 999" className="w-full pl-12 p-4 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-lg outline-none transition-all" />
+                    <Phone size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input name="whatsapp" defaultValue={editingUser?.whatsapp} placeholder="999 999 999" className="w-full pl-10 md:pl-12 p-3 md:p-4 rounded-xl md:rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-sm md:text-lg outline-none transition-all" />
                   </div>
                 </div>
                 <div className="space-y-2">
                   <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Correo Electrónico</label>
                   <div className="relative">
-                    <Mail size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-                    <input name="email" type="email" defaultValue={editingUser?.email} placeholder="ejemplo@stnj.com" className="w-full pl-12 p-4 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-lg outline-none transition-all" />
+                    <Mail size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input name="email" type="email" defaultValue={editingUser?.email} placeholder="ejemplo@stnj.com" className="w-full pl-10 md:pl-12 p-3 md:p-4 rounded-xl md:rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-sm md:text-lg outline-none transition-all" />
                   </div>
                 </div>
                 <div className="space-y-2">
                   <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Rol del Usuario</label>
-                  <select name="role" defaultValue={editingUser?.role || 'staff'} className="w-full p-4 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-lg appearance-none outline-none">
+                  <select name="role" defaultValue={editingUser?.role || 'staff'} className="w-full p-3 md:p-4 rounded-xl md:rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-sm md:text-lg appearance-none outline-none">
                     <option value="admin">Administrador (Master)</option>
                     <option value="staff">Personal (Staff)</option>
                   </select>
                 </div>
               </div>
 
-              <div className="flex gap-4 pt-6">
-                <button type="button" onClick={() => setIsUserModalOpen(false)} className="flex-1 py-4 rounded-2xl border-2 border-slate-100 text-slate-400 font-black hover:bg-slate-50 uppercase tracking-widest text-xs transition-all">Cancelar</button>
-                <button type="submit" className="flex-1 py-4 rounded-2xl bg-blue-600 text-white font-black shadow-xl hover:bg-blue-700 uppercase tracking-widest text-xs transition-all">
+              <div className="flex gap-3 md:gap-4 pt-4 md:pt-6">
+                <button type="button" onClick={() => setIsUserModalOpen(false)} className="flex-1 py-3 md:py-4 rounded-xl md:rounded-2xl border-2 border-slate-100 text-slate-400 font-black hover:bg-slate-50 uppercase tracking-widest text-[10px] md:text-xs transition-all">Cancelar</button>
+                <button type="submit" className="flex-1 py-3 md:py-4 rounded-xl md:rounded-2xl bg-blue-600 text-white font-black shadow-xl hover:bg-blue-700 uppercase tracking-widest text-[10px] md:text-xs transition-all">
                    {editingUser ? 'Guardar Cambios' : 'Crear Usuario'}
                 </button>
               </div>
@@ -4732,6 +5423,123 @@ const App = () => {
         </div>
       )}
 
+      {/* Course Modal */}
+      {editingCourse && (
+        <div className="fixed inset-0 z-[130] flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xl animate-fade-in">
+          <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-md overflow-hidden animate-slide-up border border-white/20">
+            <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-900 text-white">
+              <h2 className="text-xl font-black uppercase tracking-widest">Configurar Materia</h2>
+              <button onClick={() => setEditingCourse(null)} className="hover:bg-white/20 p-2 rounded-full transition-all"><X size={20} /></button>
+            </div>
+            <div className="p-8 space-y-6">
+              <div className="space-y-2">
+                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Nombre de la Materia</label>
+                <input 
+                  value={editingCourse.name}
+                  onChange={(e) => setEditingCourse({...editingCourse, name: e.target.value})}
+                  placeholder="Ej. Matemáticas" 
+                  className="w-full p-4 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-lg outline-none transition-all" 
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Docente Asignado</label>
+                <select 
+                  value={editingCourse.teacherId || ''}
+                  onChange={(e) => setEditingCourse({...editingCourse, teacherId: e.target.value})}
+                  className="w-full p-4 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-xs uppercase outline-none transition-all"
+                >
+                  <option value="">Sin Asignar</option>
+                  {students.filter(s => s.rol === 'Docente').map(teacher => (
+                    <option key={teacher.id} value={teacher.id}>{teacher.nombre} {teacher.apellido}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-2">
+                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Color Distintivo</label>
+                <div className="flex gap-3 flex-wrap">
+                  {['#ef4444', '#f97316', '#f59e0b', '#10b981', '#3b82f6', '#6366f1', '#8b5cf6', '#ec4899', '#64748b'].map(color => (
+                    <button 
+                      key={color}
+                      onClick={() => setEditingCourse({...editingCourse, color})}
+                      className={`w-10 h-10 rounded-full border-4 transition-all ${editingCourse.color === color ? 'border-slate-900 scale-110 shadow-lg' : 'border-transparent hover:scale-105'}`}
+                      style={{ backgroundColor: color }}
+                    />
+                  ))}
+                </div>
+              </div>
+              <div className="flex gap-4 pt-4">
+                <button onClick={() => setEditingCourse(null)} className="flex-1 py-4 rounded-2xl border-2 border-slate-100 text-slate-400 font-black hover:bg-slate-50 uppercase tracking-widest text-xs transition-all">Cancelar</button>
+                <button 
+                  onClick={() => {
+                    if(editingCourse.name) {
+                      const exists = courses.find(c => c.id === editingCourse.id);
+                      if(exists) {
+                        setCourses(courses.map(c => c.id === editingCourse.id ? editingCourse : c));
+                      } else {
+                        setCourses([...courses, editingCourse]);
+                      }
+                      setEditingCourse(null);
+                      setToast({ message: "Materia guardada", type: 'success' });
+                    }
+                  }}
+                  className="flex-1 py-4 rounded-2xl bg-blue-600 text-white font-black shadow-xl hover:bg-blue-700 uppercase tracking-widest text-xs transition-all"
+                >Guardar</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Time Slot Modal */}
+      {editingTimeSlot && (
+        <div className="fixed inset-0 z-[130] flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xl animate-fade-in">
+          <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-md overflow-hidden animate-slide-up border border-white/20">
+            <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-900 text-white">
+              <h2 className="text-xl font-black uppercase tracking-widest">Configurar Hora</h2>
+              <button onClick={() => setEditingTimeSlot(null)} className="hover:bg-white/20 p-2 rounded-full transition-all"><X size={20} /></button>
+            </div>
+            <div className="p-8 space-y-6">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Inicio</label>
+                  <input 
+                    type="time"
+                    value={editingTimeSlot.start}
+                    onChange={(e) => setEditingTimeSlot({...editingTimeSlot, start: e.target.value})}
+                    className="w-full p-4 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-lg outline-none transition-all" 
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Fin</label>
+                  <input 
+                    type="time"
+                    value={editingTimeSlot.end}
+                    onChange={(e) => setEditingTimeSlot({...editingTimeSlot, end: e.target.value})}
+                    className="w-full p-4 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-lg outline-none transition-all" 
+                  />
+                </div>
+              </div>
+              <div className="flex gap-4 pt-4">
+                <button onClick={() => setEditingTimeSlot(null)} className="flex-1 py-4 rounded-2xl border-2 border-slate-100 text-slate-400 font-black hover:bg-slate-50 uppercase tracking-widest text-xs transition-all">Cancelar</button>
+                <button 
+                  onClick={() => {
+                    const exists = timeSlots.find(s => s.id === editingTimeSlot.id);
+                    if(exists) {
+                      setTimeSlots(timeSlots.map(s => s.id === editingTimeSlot.id ? editingTimeSlot : s).sort((a,b) => a.start.localeCompare(b.start)));
+                    } else {
+                      setTimeSlots([...timeSlots, editingTimeSlot].sort((a,b) => a.start.localeCompare(b.start)));
+                    }
+                    setEditingTimeSlot(null);
+                    setToast({ message: "Horario guardado", type: 'success' });
+                  }}
+                  className="flex-1 py-4 rounded-2xl bg-blue-600 text-white font-black shadow-xl hover:bg-blue-700 uppercase tracking-widest text-xs transition-all"
+                >Guardar</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* --- TOAST NOTIFICATION --- */}
       {toast && (
         <div className="fixed bottom-10 left-1/2 -translate-x-1/2 z-[100] animate-slide-up">
@@ -4746,53 +5554,251 @@ const App = () => {
 };
 
 // --- Sub-components ---
-const StatCards = ({ studentsCount, teachersCount, grades, todayAttendance, activeConfig }: any) => (
-  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-    <StatCard title="Estudiantes" value={studentsCount} icon={Users} color="blue" activeConfig={activeConfig} />
-    <StatCard title="Docentes" value={teachersCount} icon={GraduationCap} color="indigo" activeConfig={activeConfig} />
-    <StatCard title="Promedio" value={(grades.reduce((a: any, b: any) => a + b.nota, 0) / (grades.length || 1)).toFixed(1)} icon={Award} color="amber" activeConfig={activeConfig} />
-    <StatCard title="Hoy Asistieron" value={todayAttendance.length} icon={CheckCircle} color="emerald" activeConfig={activeConfig} />
-  </div>
-);
+const StatCards = ({ studentsCount, teachersCount, grades, todayAttendance, consultationLogs, activeConfig }: any) => {
+  const today = new Date().toISOString().split('T')[0];
+  const todayConsultations = consultationLogs.filter((l: any) => l.date === today).length;
+  
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 md:gap-6">
+      <StatCard title="Estudiantes" value={studentsCount} icon={Users} color="blue" activeConfig={activeConfig} />
+      <StatCard title="Docentes" value={teachersCount} icon={GraduationCap} color="indigo" activeConfig={activeConfig} />
+      <StatCard title="Promedio" value={(grades.reduce((a: any, b: any) => a + b.nota, 0) / (grades.length || 1)).toFixed(1)} icon={Award} color="amber" activeConfig={activeConfig} />
+      <StatCard title="Asistencia" value={todayAttendance.length} icon={CheckCircle} color="emerald" activeConfig={activeConfig} />
+      <StatCard title="Consultas" value={todayConsultations} icon={Search} color="blue" activeConfig={activeConfig} />
+    </div>
+  );
+};
 
 const StatCardsAttendance = ({ statsAtt }: any) => (
   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-    <div className="bg-white p-6 rounded-3xl shadow-md border border-emerald-50 text-center transition-all hover:shadow-lg">
-        <p className="text-2xl font-black text-emerald-600">{statsAtt.presentes}</p>
-        <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mt-1">Entrada</p>
+    <div className="bg-white p-6 rounded-3xl shadow-md border border-emerald-50 text-center transition-all hover:shadow-lg group relative overflow-hidden">
+        <div className="flex justify-center mb-2 relative z-10">
+          <div className="p-2 bg-emerald-50 text-emerald-600 rounded-lg group-hover:scale-110 transition-transform">
+            <UserCheck size={20} />
+          </div>
+        </div>
+        <p className="text-2xl font-black text-emerald-600 relative z-10">{statsAtt.presentes}</p>
+        <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mt-1 relative z-10">Entrada</p>
+        <div className="absolute -right-2 -bottom-2 opacity-5 text-emerald-600">
+          <UserCheck size={60} />
+        </div>
     </div>
-    <div className="bg-white p-6 rounded-3xl shadow-md border border-amber-50 text-center transition-all hover:shadow-lg">
-        <p className="text-2xl font-black text-amber-600">{statsAtt.tardanzas}</p>
-        <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mt-1">Tardanzas</p>
+    <div className="bg-white p-6 rounded-3xl shadow-md border border-amber-50 text-center transition-all hover:shadow-lg group relative overflow-hidden">
+        <div className="flex justify-center mb-2 relative z-10">
+          <div className="p-2 bg-amber-50 text-amber-600 rounded-lg group-hover:scale-110 transition-transform">
+            <Clock size={20} />
+          </div>
+        </div>
+        <p className="text-2xl font-black text-amber-600 relative z-10">{statsAtt.tardanzas}</p>
+        <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mt-1 relative z-10">Tardanzas</p>
+        <div className="absolute -right-2 -bottom-2 opacity-5 text-amber-600">
+          <Clock size={60} />
+        </div>
     </div>
-    <div className="bg-white p-6 rounded-3xl shadow-md border border-blue-50 text-center transition-all hover:shadow-lg">
-        <p className="text-2xl font-black text-blue-600">{statsAtt.salidas}</p>
-        <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mt-1">Salidas</p>
+    <div className="bg-white p-6 rounded-3xl shadow-md border border-blue-50 text-center transition-all hover:shadow-lg group relative overflow-hidden">
+        <div className="flex justify-center mb-2 relative z-10">
+          <div className="p-2 bg-blue-50 text-blue-600 rounded-lg group-hover:scale-110 transition-transform">
+            <LogOutIcon size={20} />
+          </div>
+        </div>
+        <p className="text-2xl font-black text-blue-600 relative z-10">{statsAtt.salidas}</p>
+        <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mt-1 relative z-10">Salidas</p>
+        <div className="absolute -right-2 -bottom-2 opacity-5 text-blue-600">
+          <LogOutIcon size={60} />
+        </div>
     </div>
-    <div className="bg-white p-6 rounded-3xl shadow-md border border-indigo-50 text-center transition-all hover:shadow-lg">
-        <p className="text-2xl font-black text-indigo-600">{statsAtt.permisos}</p>
-        <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mt-1">Permisos</p>
+    <div className="bg-white p-6 rounded-3xl shadow-md border border-indigo-50 text-center transition-all hover:shadow-lg group relative overflow-hidden">
+        <div className="flex justify-center mb-2 relative z-10">
+          <div className="p-2 bg-indigo-50 text-indigo-600 rounded-lg group-hover:scale-110 transition-transform">
+            <FileText size={20} />
+          </div>
+        </div>
+        <p className="text-2xl font-black text-indigo-600 relative z-10">{statsAtt.permisos}</p>
+        <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mt-1 relative z-10">Permisos</p>
+        <div className="absolute -right-2 -bottom-2 opacity-5 text-indigo-600">
+          <FileText size={60} />
+        </div>
     </div>
   </div>
 );
 
+const ConsultationAnalytics = ({ logs }: { logs: ConsultationLog[] }) => {
+  const today = new Date().toISOString().split('T')[0];
+  
+  // Daily data (today)
+  const todayLogs = logs.filter(l => l.date === today);
+  const dailyData = useMemo(() => {
+    const counts: Record<string, number> = {};
+    todayLogs.forEach(l => {
+      const key = `${l.grado} ${l.seccion}`;
+      counts[key] = (counts[key] || 0) + 1;
+    });
+    return Object.entries(counts).map(([name, value]) => ({ name, value })).sort((a,b) => b.value - a.value);
+  }, [todayLogs]);
+
+  // Weekly data
+  const weeklyData = useMemo(() => {
+    const last7Days = Array.from({ length: 7 }, (_, i) => {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      return d.toISOString().split('T')[0];
+    });
+    
+    const weekLogs = logs.filter(l => last7Days.includes(l.date));
+    
+    const levelCounts: Record<string, number> = {};
+    const gradeCounts: Record<string, number> = {};
+    
+    weekLogs.forEach(l => {
+      levelCounts[l.nivel] = (levelCounts[l.nivel] || 0) + 1;
+      gradeCounts[l.grado] = (gradeCounts[l.grado] || 0) + 1;
+    });
+    
+    const sortedLevels = Object.entries(levelCounts).sort((a,b) => (b[1] as number) - (a[1] as number));
+    const sortedGrades = Object.entries(gradeCounts).sort((a,b) => (b[1] as number) - (a[1] as number));
+    
+    return {
+      levels: sortedLevels,
+      grades: sortedGrades,
+      total: weekLogs.length
+    };
+  }, [logs]);
+
+  const COLORS = ['#2563eb', '#4f46e5', '#7c3aed', '#db2777', '#dc2626', '#ea580c', '#d97706', '#ca8a04', '#65a30d', '#16a34a'];
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Daily Chart */}
+        <div className="bg-white p-6 rounded-[2.5rem] shadow-xl border border-slate-100">
+          <div className="flex items-center gap-4 mb-6">
+            <div className="p-3 bg-blue-600 rounded-xl text-white shadow-lg">
+              <BarChart3 size={20} />
+            </div>
+            <div>
+              <h3 className="text-lg font-black text-slate-800 uppercase tracking-tight">Consultas de Hoy</h3>
+              <p className="text-slate-400 text-[10px] font-bold uppercase tracking-widest">Actividad por Grado y Sección</p>
+            </div>
+          </div>
+          
+          <div className="h-64 w-full">
+            {dailyData.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={dailyData}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                  <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 10, fontWeight: 700, fill: '#94a3b8' }} />
+                  <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fontWeight: 700, fill: '#94a3b8' }} />
+                  <Tooltip 
+                    contentStyle={{ borderRadius: '1rem', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
+                    itemStyle={{ fontSize: '12px', fontWeight: 900, textTransform: 'uppercase' }}
+                  />
+                  <Bar dataKey="value" radius={[10, 10, 0, 0]}>
+                    {dailyData.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="h-full flex flex-col items-center justify-center text-slate-300 gap-2">
+                <Search size={40} className="opacity-20" />
+                <p className="text-[10px] font-black uppercase tracking-widest">Sin actividad hoy</p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Weekly Summary */}
+        <div className="bg-white p-6 rounded-[2.5rem] shadow-xl border border-slate-100">
+          <div className="flex items-center gap-4 mb-6">
+            <div className="p-3 bg-indigo-600 rounded-xl text-white shadow-lg">
+              <Calendar size={20} />
+            </div>
+            <div>
+              <h3 className="text-lg font-black text-slate-800 uppercase tracking-tight">Resumen Semanal</h3>
+              <p className="text-slate-400 text-[10px] font-bold uppercase tracking-widest">Tendencias de Búsqueda</p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="space-y-4">
+              <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2">Nivel más consultado</p>
+                {weeklyData.levels[0] ? (
+                  <div className="flex items-center justify-between">
+                    <p className="font-black text-slate-800 uppercase text-sm">{weeklyData.levels[0][0]}</p>
+                    <span className="bg-indigo-100 text-indigo-700 px-2 py-1 rounded-lg text-[10px] font-black">{weeklyData.levels[0][1]}</span>
+                  </div>
+                ) : <p className="text-xs font-bold text-slate-300 italic">Sin datos</p>}
+              </div>
+              <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2">Grado más consultado</p>
+                {weeklyData.grades[0] ? (
+                  <div className="flex items-center justify-between">
+                    <p className="font-black text-slate-800 uppercase text-sm">{weeklyData.grades[0][0]}</p>
+                    <span className="bg-blue-100 text-blue-700 px-2 py-1 rounded-lg text-[10px] font-black">{weeklyData.grades[0][1]}</span>
+                  </div>
+                ) : <p className="text-xs font-bold text-slate-300 italic">Sin datos</p>}
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2">Nivel menos consultado</p>
+                {weeklyData.levels.length > 1 ? (
+                  <div className="flex items-center justify-between">
+                    <p className="font-black text-slate-800 uppercase text-sm">{weeklyData.levels[weeklyData.levels.length - 1][0]}</p>
+                    <span className="bg-slate-200 text-slate-600 px-2 py-1 rounded-lg text-[10px] font-black">{weeklyData.levels[weeklyData.levels.length - 1][1]}</span>
+                  </div>
+                ) : <p className="text-xs font-bold text-slate-300 italic">Sin datos</p>}
+              </div>
+              <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2">Grado menos consultado</p>
+                {weeklyData.grades.length > 1 ? (
+                  <div className="flex items-center justify-between">
+                    <p className="font-black text-slate-800 uppercase text-sm">{weeklyData.grades[weeklyData.grades.length - 1][0]}</p>
+                    <span className="bg-slate-200 text-slate-600 px-2 py-1 rounded-lg text-[10px] font-black">{weeklyData.grades[weeklyData.grades.length - 1][1]}</span>
+                  </div>
+                ) : <p className="text-xs font-bold text-slate-300 italic">Sin datos</p>}
+              </div>
+            </div>
+          </div>
+          
+          <div className="mt-6 pt-6 border-t border-slate-100 flex items-center justify-between">
+            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Total Consultas (7d)</p>
+            <p className="text-2xl font-black text-slate-800">{weeklyData.total}</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const StatCard = ({ title, value, icon: Icon, color, activeConfig }: { title: string, value: any, icon: any, color: string, activeConfig: any }) => {
   const colors: any = {
-    blue: 'bg-blue-600 text-blue-600 shadow-blue-100',
-    amber: 'bg-amber-600 text-amber-600 shadow-amber-100',
-    emerald: 'bg-emerald-600 text-emerald-600 shadow-emerald-100',
-    indigo: 'bg-indigo-600 text-indigo-600 shadow-indigo-100'
+    blue: { bg: 'bg-blue-600', text: 'text-blue-600', shadow: 'shadow-blue-100', light: 'bg-blue-50' },
+    amber: { bg: 'bg-amber-600', text: 'text-amber-600', shadow: 'shadow-amber-100', light: 'bg-amber-50' },
+    emerald: { bg: 'bg-emerald-600', text: 'text-emerald-600', shadow: 'shadow-emerald-100', light: 'bg-emerald-50' },
+    indigo: { bg: 'bg-indigo-600', text: 'text-indigo-600', shadow: 'shadow-indigo-100', light: 'bg-indigo-50' }
   };
+  const c = colors[color] || colors.blue;
+  
   return (
-    <div className="bg-white p-6 rounded-3xl shadow-md border border-slate-100 hover:shadow-lg transition-all duration-300">
-      <div className="flex items-center justify-between mb-4">
-        <div className={`p-3 rounded-xl bg-opacity-10 ${colors[color].split(' ')[0]}`}>
-          <Icon size={20} style={{ color: colors[color].includes('blue') ? activeConfig.theme.primaryColor : undefined }} className={!colors[color].includes('blue') ? colors[color].split(' ')[1] : ''} />
+    <div className="bg-white p-6 rounded-3xl shadow-md border border-slate-100 hover:shadow-lg transition-all duration-300 relative overflow-hidden group">
+      <div className="flex items-center justify-between mb-4 relative z-10">
+        <div className={`p-3 rounded-xl ${c.light} ${c.text} group-hover:scale-110 transition-transform duration-500`}>
+          <Icon size={24} />
         </div>
         <div className="w-2 h-2 rounded-full bg-slate-100"></div>
       </div>
-      <p className="text-3xl font-black text-slate-800 mb-1 tracking-tight">{value}</p>
-      <p className="text-slate-400 font-black text-[9px] uppercase tracking-widest">{title}</p>
+      <div className="relative z-10">
+        <p className="text-3xl font-black text-slate-800 mb-1 tracking-tight">{value}</p>
+        <p className="text-slate-400 font-black text-[9px] uppercase tracking-widest">{title}</p>
+      </div>
+      {/* Decorative background icon */}
+      <div className={`absolute -right-4 -bottom-4 opacity-5 ${c.text} group-hover:scale-125 transition-transform duration-700`}>
+        <Icon size={100} />
+      </div>
     </div>
   );
 };
