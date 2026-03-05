@@ -78,6 +78,12 @@ interface UserConfig {
     secondaryColor: string;
     fontFamily: string;
   };
+  publicModules?: {
+    attendance: boolean;
+    alerts: boolean;
+    schedule: boolean;
+  };
+  footerText?: string;
 }
 
 interface AppUser {
@@ -108,6 +114,8 @@ interface Student {
   siteName?: string;
   slogan?: string;
   logo?: string; // base64 logo override
+  primaryColor?: string;
+  secondaryColor?: string;
 }
 
 type AttendanceStatus = 'entrada' | 'tardanza' | 'ausente' | 'salida' | 'permiso';
@@ -165,6 +173,28 @@ interface Schedule {
   materia?: string;
 }
 
+type IncidenceSeverity = 'leve' | 'moderado' | 'grave';
+type IncidenceStatus = 'registrada' | 'en evaluación' | 'en seguimiento' | 'resuelta' | 'escalada a un caso mayor';
+
+interface Incidence {
+  id: string;
+  studentId: string;
+  studentName: string;
+  studentDni: string;
+  studentGrade: string;
+  type: string;
+  description: string;
+  severity: IncidenceSeverity;
+  status: IncidenceStatus;
+  date: string;
+  registeredBy: string;
+}
+
+interface IncidenceType {
+  id: string;
+  name: string;
+}
+
 interface AppNotification {
   id: string;
   userId: string;
@@ -196,14 +226,21 @@ const App = () => {
         primaryColor: '#1e3a8a',
         secondaryColor: '#3b82f6',
         fontFamily: 'Poppins'
-      }
+      },
+      publicModules: {
+        attendance: true,
+        alerts: true,
+        schedule: true
+      },
+      footerText: 'Control y Gestión 2026 © 2024'
     };
   });
 
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'estudiantes' | 'asistencia' | 'calificaciones' | 'reportes' | 'mi-panel' | 'config'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'estudiantes' | 'asistencia' | 'calificaciones' | 'reportes' | 'alerta' | 'mi-panel' | 'config'>('dashboard');
   const [activeConfigSubTab, setActiveConfigSubTab] = useState<'usuarios' | 'sistema'>('usuarios');
   const [activeReportSubTab, setActiveReportSubTab] = useState<'global' | 'personalizado'>('global');
-  const [activePanelSubTab, setActivePanelSubTab] = useState<'perfil' | 'grados' | 'horarios'>('perfil');
+  const [activeAlertaSubTab, setActiveAlertaSubTab] = useState<'registro' | 'historial'>('registro');
+  const [activePanelSubTab, setActivePanelSubTab] = useState<'perfil' | 'grados' | 'horarios' | 'alerta'>('perfil');
   const [activeGradosSubTab, setActiveGradosSubTab] = useState<'niveles' | 'grados'>('niveles');
   const [activeHorariosSubTab, setActiveHorariosSubTab] = useState<'clases' | 'turnos'>('clases');
   const [panelModalType, setPanelModalType] = useState<'level' | 'grade' | 'shift' | 'schedule' | 'profile' | 'report' | 'siteConfig' | null>(null);
@@ -220,10 +257,30 @@ const App = () => {
   const [gradeLevels, setGradeLevels] = useState<GradeLevel[]>([]);
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [shifts, setShifts] = useState<Shift[]>([]);
+  const [incidences, setIncidences] = useState<Incidence[]>([]);
+  const [incidenceTypes, setIncidencesTypes] = useState<IncidenceType[]>([
+    { id: '1', name: 'Acumulación de tardanzas' },
+    { id: '2', name: 'Incumplimiento de tareas' },
+    { id: '3', name: 'Faltas repetidas' },
+    { id: '4', name: 'Celular en clases' },
+    { id: '5', name: 'Conducta inapropiada en la institución' }
+  ]);
+  const [editingIncidence, setEditingIncidence] = useState<Incidence | null>(null);
+  const [editingIncidenceType, setEditingIncidenceType] = useState<IncidenceType | null>(null);
   const [aiReport, setAiReport] = useState<string>("");
   const [isAiLoading, setIsAiLoading] = useState(false);
   
-  const activeConfig = currentUser?.config || globalConfig;
+  const activeConfig = useMemo(() => {
+    const config = currentUser?.config || globalConfig;
+    return {
+      ...globalConfig,
+      ...config,
+      theme: {
+        ...globalConfig.theme,
+        ...(config.theme || {})
+      }
+    };
+  }, [currentUser, globalConfig]);
 
   // Search & Filters (Global/Students)
   const [searchTerm, setSearchTerm] = useState("");
@@ -266,6 +323,14 @@ const App = () => {
   const [isPersonalizationModalOpen, setIsPersonalizationModalOpen] = useState(false);
   const [isGlobalThemeModalOpen, setIsGlobalThemeModalOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [showLanding, setShowLanding] = useState(true);
+  const [isAdminLoginModalOpen, setIsAdminLoginModalOpen] = useState(false);
+  const [adminLoginPassword, setAdminLoginPassword] = useState("");
+  const [consultasSearchDni, setConsultasSearchDni] = useState("");
+  const [consultasResult, setConsultasResult] = useState<Student | null>(null);
+  const [activeConsultasTab, setActiveConsultasTab] = useState<'asistencia' | 'alerta' | 'horario'>('asistencia');
+  const [isConsultasModalOpen, setIsConsultasModalOpen] = useState(false);
+  const [isDniInputModalOpen, setIsDniInputModalOpen] = useState(false);
 
   // QR Scanner State
   const [lastDetectedPerson, setLastDetectedPerson] = useState<Student | null>(null);
@@ -321,6 +386,7 @@ const App = () => {
       users: JSON.parse(localStorage.getItem('stnj_users_v10') || '[]'),
       globalConfig: JSON.parse(localStorage.getItem('stnj_config_v10') || 'null'),
       notifications: JSON.parse(localStorage.getItem('stnj_notifications_v10') || '[]'),
+      incidenceTypes: JSON.parse(localStorage.getItem('stnj_incidence_types_v10') || 'null'),
     };
     
     if (sharedData.users.length === 0) {
@@ -329,7 +395,7 @@ const App = () => {
         username: 'admin',
         password: '1234',
         role: 'admin',
-        permissions: ['dashboard', 'estudiantes', 'asistencia', 'reportes', 'calificaciones', 'mi-panel', 'config', 'horarios']
+        permissions: ['dashboard', 'estudiantes', 'asistencia', 'reportes', 'alerta', 'calificaciones', 'mi-panel', 'config', 'horarios']
       };
       setUsers([defaultAdmin]);
     } else {
@@ -340,6 +406,7 @@ const App = () => {
           if (!newPermissions.includes('reportes')) newPermissions.push('reportes');
           if (!newPermissions.includes('mi-panel')) newPermissions.push('mi-panel');
           if (!newPermissions.includes('horarios')) newPermissions.push('horarios');
+          if (!newPermissions.includes('alerta')) newPermissions.push('alerta');
           return { ...u, permissions: Array.from(new Set(newPermissions)) };
         }
         return u;
@@ -353,6 +420,9 @@ const App = () => {
     if (sharedData.notifications) {
       setNotifications(sharedData.notifications);
     }
+    if (sharedData.incidenceTypes) {
+      setIncidencesTypes(sharedData.incidenceTypes);
+    }
   }, []);
 
   // Load user-specific data when currentUser changes
@@ -363,34 +433,67 @@ const App = () => {
         setStudents(userData.students || []);
         setAttendance(userData.attendance || []);
         setGrades(userData.grades || []);
+        setIncidences(userData.incidences || []);
       } else {
         // New user or no data yet
         setStudents([]);
         setAttendance([]);
         setGrades([]);
+        setIncidences([]);
       }
     } else {
-      // Logged out
-      setStudents([]);
-      setAttendance([]);
-      setGrades([]);
+      // Public view (Landing Page)
+      // Aggregate data from all admins to allow public searches across institutions
+      const admins = users.filter(u => u.role === 'admin');
+      let allStudents: Student[] = [];
+      let allAttendance: Attendance[] = [];
+      let allIncidences: Incidence[] = [];
+      let allGrades: Grade[] = [];
+
+      admins.forEach(admin => {
+        const userData = JSON.parse(localStorage.getItem(`stnj_userdata_${admin.id}`) || 'null');
+        const adminConfig = admin.config || globalConfig;
+        
+        if (userData) {
+          if (userData.students) {
+            const taggedStudents = userData.students.map((s: Student) => ({
+              ...s,
+              siteName: adminConfig.siteName,
+              logo: adminConfig.logo,
+              slogan: adminConfig.slogan,
+              primaryColor: adminConfig.theme.primaryColor,
+              secondaryColor: adminConfig.theme.secondaryColor
+            }));
+            allStudents = [...allStudents, ...taggedStudents];
+          }
+          if (userData.attendance) allAttendance = [...allAttendance, ...userData.attendance];
+          if (userData.incidences) allIncidences = [...allIncidences, ...userData.incidences];
+          if (userData.grades) allGrades = [...allGrades, ...userData.grades];
+        }
+      });
+
+      setStudents(allStudents);
+      setAttendance(allAttendance);
+      setIncidences(allIncidences);
+      setGrades(allGrades);
     }
-  }, [isAuthenticated, currentUser]);
+  }, [isAuthenticated, currentUser, users]);
 
   // Save shared data
   useEffect(() => {
     localStorage.setItem('stnj_users_v10', JSON.stringify(users));
     localStorage.setItem('stnj_config_v10', JSON.stringify(globalConfig));
     localStorage.setItem('stnj_notifications_v10', JSON.stringify(notifications));
-  }, [users, globalConfig, notifications]);
+    localStorage.setItem('stnj_incidence_types_v10', JSON.stringify(incidenceTypes));
+  }, [users, globalConfig, notifications, incidenceTypes]);
 
   // Save user-specific data
   useEffect(() => {
     if (isAuthenticated && currentUser) {
-      const dataToSave = { students, attendance, grades };
+      const dataToSave = { students, attendance, grades, incidences };
       localStorage.setItem(`stnj_userdata_${currentUser.id}`, JSON.stringify(dataToSave));
     }
-  }, [students, attendance, grades, isAuthenticated, currentUser]);
+  }, [students, attendance, grades, incidences, isAuthenticated, currentUser]);
 
   // --- Dynamic Theme Application ---
   useEffect(() => {
@@ -999,6 +1102,7 @@ const App = () => {
   const handleLogout = () => {
     setIsAuthenticated(false);
     setCurrentUser(null);
+    setShowLanding(true);
   };
 
   const exportToExcel = (data: any[], fileName: string) => {
@@ -1231,6 +1335,380 @@ const App = () => {
     }
   }, [activeTab, isAuthenticated, isScannerModalOpen, stopScanner]);
 
+  const handleConsultasSearch = (e: React.FormEvent) => {
+    e.preventDefault();
+    const pub = globalConfig.publicModules || { attendance: true, alerts: true, schedule: true };
+    if (!pub.attendance && !pub.alerts && !pub.schedule) {
+      setToast({ message: "El acceso público está deshabilitado por el administrador.", type: 'error' });
+      return;
+    }
+
+    const student = students.find(s => s.dni === consultasSearchDni);
+    if (student) {
+      setConsultasResult(student);
+      setIsDniInputModalOpen(false);
+      setIsConsultasModalOpen(true);
+      setConsultasSearchDni("");
+      // Set default tab based on visibility
+      if (pub.attendance) setActiveConsultasTab('asistencia');
+      else if (pub.alerts) setActiveConsultasTab('alerta');
+      else if (pub.schedule) setActiveConsultasTab('horario');
+    } else {
+      setToast({ message: "No se encontró ningún estudiante con ese DNI.", type: 'error' });
+    }
+  };
+
+  const handleAdminLogin = (e: React.FormEvent) => {
+    e.preventDefault();
+    // Check if password matches any admin user
+    const adminUser = users.find(u => u.role === 'admin' && u.password === adminLoginPassword);
+    if (adminUser) {
+      setShowLanding(false);
+      setIsAdminLoginModalOpen(false);
+      setAdminLoginPassword("");
+      // If we want to automatically log in the user, we could do it here, 
+      // but the user just said "ingresar a la pagina principal con la contraseña".
+      // Let's see if we should also set isAuthenticated.
+      // Usually "ingresar a la pagina principal" means bypassing the login screen.
+      setIsAuthenticated(true);
+      setCurrentUser(adminUser);
+      setToast({ message: `Bienvenido, ${adminUser.fullName || adminUser.username}`, type: 'success' });
+    } else {
+      setToast({ message: "Contraseña administrativa incorrecta.", type: 'error' });
+    }
+  };
+
+  if (showLanding) {
+    const pub = globalConfig.publicModules || { attendance: true, alerts: true, schedule: true };
+    return (
+      <div className="h-full flex flex-col items-center justify-center p-6 relative overflow-hidden" style={{ fontFamily: globalConfig.theme.fontFamily, background: `linear-gradient(135deg, ${globalConfig.theme.primaryColor}10 0%, ${globalConfig.theme.secondaryColor}10 100%)` }}>
+        {/* Decorative background elements */}
+        <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] rounded-full blur-[120px] animate-pulse opacity-20" style={{ backgroundColor: globalConfig.theme.primaryColor }}></div>
+        <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] rounded-full blur-[120px] animate-pulse delay-700 opacity-20" style={{ backgroundColor: globalConfig.theme.secondaryColor }}></div>
+
+        <div className="max-w-md w-full space-y-12 text-center relative z-10">
+          <div className="space-y-4 animate-slide-up">
+            <div className="w-24 h-24 rounded-[2.5rem] bg-white shadow-2xl border border-slate-100 flex items-center justify-center mx-auto mb-8 transition-transform hover:scale-110 duration-500">
+              {globalConfig.logo ? <img src={globalConfig.logo} className="w-16 h-16 object-contain" /> : <GraduationCap size={48} style={{ color: globalConfig.theme.primaryColor }} />}
+            </div>
+            <h1 className="text-5xl font-black text-slate-900 tracking-tighter uppercase leading-none">
+              {globalConfig.siteName}
+            </h1>
+            <p className="text-slate-400 font-bold uppercase tracking-[0.3em] text-[10px]">
+              {globalConfig.slogan || "Educación con Valores y Tecnología"}
+            </p>
+          </div>
+
+          <div className="space-y-6 animate-slide-up delay-150">
+            <button 
+              onClick={() => setIsDniInputModalOpen(true)}
+              className="w-full py-10 bg-white border-2 border-slate-100 rounded-[3rem] shadow-2xl hover:shadow-blue-200/50 hover:border-blue-200 transition-all group relative overflow-hidden"
+            >
+              <div className="absolute inset-0 bg-gradient-to-br from-blue-50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
+              <div className="relative z-10 flex flex-col items-center gap-2">
+                <Search size={40} style={{ color: globalConfig.theme.primaryColor }} className="mb-2" />
+                <span className="text-4xl font-black text-slate-800 tracking-tight uppercase">Consultas</span>
+                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Acceso Público</span>
+              </div>
+            </button>
+
+            <button 
+              onClick={() => setIsAdminLoginModalOpen(true)}
+              className="group flex flex-col items-center mx-auto transition-all hover:scale-105"
+            >
+              <div className="w-12 h-12 rounded-2xl bg-slate-100 flex items-center justify-center text-slate-400 group-hover:bg-slate-900 group-hover:text-white transition-all shadow-sm">
+                <Lock size={20} />
+              </div>
+              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-2 group-hover:text-slate-900 transition-all">Admin</span>
+            </button>
+          </div>
+        </div>
+
+        {/* DNI Input Modal */}
+        {isDniInputModalOpen && (
+          <div className="fixed inset-0 z-[110] flex items-center justify-center p-6 bg-slate-950/80 backdrop-blur-xl animate-fade-in">
+            <div className="bg-white rounded-[3rem] shadow-2xl w-full max-w-sm overflow-hidden animate-slide-up">
+              <div className="p-8 border-b border-slate-100 flex justify-between items-center bg-slate-900 text-white">
+                <div>
+                  <h2 className="text-xl font-black uppercase tracking-widest">Consulta DNI</h2>
+                  <p className="text-slate-400 text-[9px] font-bold uppercase mt-1">Ingrese el documento del alumno</p>
+                </div>
+                <button onClick={() => setIsDniInputModalOpen(false)} className="hover:bg-white/20 p-2 rounded-full transition-all"><X size={20} /></button>
+              </div>
+              <form onSubmit={handleConsultasSearch} className="p-8 space-y-6">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">DNI del Estudiante</label>
+                  <div className="relative">
+                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                    <input 
+                      type="text" 
+                      autoFocus
+                      className="w-full pl-12 pr-4 py-4 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-lg outline-none transition-all"
+                      value={consultasSearchDni}
+                      onChange={(e) => setConsultasSearchDni(e.target.value)}
+                      placeholder="Ej. 70654321"
+                      required
+                    />
+                  </div>
+                </div>
+                <button type="submit" className="w-full py-5 text-white rounded-2xl font-black uppercase tracking-widest text-xs shadow-xl hover:opacity-90 transition-all" style={{ backgroundColor: globalConfig.theme.primaryColor }}>
+                  Buscar Estudiante
+                </button>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* Consultas Modal */}
+        {isConsultasModalOpen && consultasResult && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 md:p-10 bg-slate-950/90 backdrop-blur-xl animate-fade-in">
+            <div className="bg-white rounded-[3rem] shadow-2xl w-full max-w-5xl h-full max-h-[90vh] overflow-hidden flex flex-col animate-slide-up">
+              {/* Modal Header */}
+              <div className="p-8 border-b border-slate-100 flex flex-col md:flex-row justify-between items-center gap-6 text-white relative overflow-hidden" style={{ background: `linear-gradient(135deg, ${consultasResult.primaryColor || globalConfig.theme.primaryColor} 0%, ${consultasResult.secondaryColor || globalConfig.theme.secondaryColor} 100%)` }}>
+                <div className="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full -mr-32 -mt-32 blur-3xl"></div>
+                <div className="flex items-center gap-6 relative z-10">
+                  <div className="w-20 h-20 rounded-2xl bg-white/10 p-1 border border-white/20">
+                    <div className="w-full h-full rounded-xl bg-slate-800 flex items-center justify-center overflow-hidden">
+                      {consultasResult.foto ? (
+                        <img src={consultasResult.foto} className="w-full h-full object-cover" />
+                      ) : consultasResult.logo ? (
+                        <img src={consultasResult.logo} className="w-full h-full object-contain p-2 opacity-50" />
+                      ) : (
+                        <User size={32} className="text-slate-500" />
+                      )}
+                    </div>
+                  </div>
+                  <div>
+                    <h2 className="text-2xl font-black uppercase tracking-tight">{consultasResult.nombre} {consultasResult.apellido}</h2>
+                    <p className="text-blue-400 text-[10px] font-black uppercase tracking-[0.2em] mt-1">
+                      DNI: {consultasResult.dni} • {consultasResult.grado} "{consultasResult.seccion}"
+                      {consultasResult.siteName && <span className="text-white/40 ml-2">• {consultasResult.siteName}</span>}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex bg-white/10 p-1.5 rounded-2xl border border-white/10 overflow-x-auto no-scrollbar relative z-10">
+                  {pub.attendance && (
+                    <button 
+                      onClick={() => setActiveConsultasTab('asistencia')}
+                      className={`px-6 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all whitespace-nowrap ${activeConsultasTab === 'asistencia' ? 'bg-white text-slate-900 shadow-lg' : 'text-white/60 hover:text-white'}`}
+                    >Asistencia</button>
+                  )}
+                  {pub.alerts && (
+                    <button 
+                      onClick={() => setActiveConsultasTab('alerta')}
+                      className={`px-6 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all whitespace-nowrap ${activeConsultasTab === 'alerta' ? 'bg-white text-slate-900 shadow-lg' : 'text-white/60 hover:text-white'}`}
+                    >Alertas</button>
+                  )}
+                  {pub.schedule && (
+                    <button 
+                      onClick={() => setActiveConsultasTab('horario')}
+                      className={`px-6 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all whitespace-nowrap ${activeConsultasTab === 'horario' ? 'bg-white text-slate-900 shadow-lg' : 'text-white/60 hover:text-white'}`}
+                    >Horario</button>
+                  )}
+                </div>
+                <button onClick={() => setIsConsultasModalOpen(false)} className="absolute top-6 right-6 md:relative md:top-0 md:right-0 hover:bg-white/20 p-3 rounded-full transition-all relative z-10"><X size={24} /></button>
+              </div>
+
+              {/* Modal Content */}
+              <div className="flex-1 overflow-y-auto p-8 md:p-12 bg-slate-50 no-scrollbar">
+                {activeConsultasTab === 'asistencia' && (
+                  <div className="space-y-8 animate-fade-in">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                      <div className="bg-white p-8 rounded-3xl shadow-sm border border-slate-200 text-center">
+                        <p className="text-4xl font-black text-emerald-600">{attendance.filter(a => a.studentDni === consultasResult.dni && a.estado === 'entrada').length}</p>
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-2">Entradas</p>
+                      </div>
+                      <div className="bg-white p-8 rounded-3xl shadow-sm border border-slate-200 text-center">
+                        <p className="text-4xl font-black text-amber-500">{attendance.filter(a => a.studentDni === consultasResult.dni && a.estado === 'tardanza').length}</p>
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-2">Tardanzas</p>
+                      </div>
+                      <div className="bg-white p-8 rounded-3xl shadow-sm border border-slate-200 text-center">
+                        <p className="text-4xl font-black text-rose-500">{attendance.filter(a => a.studentDni === consultasResult.dni && a.estado === 'ausente').length}</p>
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-2">Faltas</p>
+                      </div>
+                    </div>
+
+                    <div className="bg-white rounded-3xl shadow-xl border border-slate-200 overflow-hidden">
+                      <table className="w-full text-left">
+                        <thead>
+                          <tr className="text-white" style={{ backgroundColor: consultasResult.primaryColor || globalConfig.theme.primaryColor }}>
+                            <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest">Fecha</th>
+                            <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest">Entrada</th>
+                            <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest">Salida</th>
+                            <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest">Estado</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {attendance.filter(a => a.studentDni === consultasResult.dni).sort((a, b) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime()).map(att => (
+                            <tr key={att.id} className="hover:bg-slate-50 transition-colors">
+                              <td className="px-6 py-4 font-bold text-slate-700 text-sm">{att.fecha}</td>
+                              <td className="px-6 py-4 font-black text-slate-900 text-sm">{att.horaEntrada || '--:--'}</td>
+                              <td className="px-6 py-4 font-black text-slate-900 text-sm">{att.horaSalida || '--:--'}</td>
+                              <td className="px-6 py-4">
+                                <span className={`px-3 py-1 rounded-full font-black text-[8px] uppercase tracking-widest ${
+                                  att.estado === 'entrada' ? 'bg-emerald-50 text-emerald-600' :
+                                  att.estado === 'tardanza' ? 'bg-amber-50 text-amber-600' :
+                                  att.estado === 'salida' ? 'bg-blue-50 text-blue-600' :
+                                  'bg-rose-50 text-rose-600'
+                                }`}>
+                                  {att.estado}
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {activeConsultasTab === 'alerta' && (
+                  <div className="space-y-6 animate-fade-in">
+                    {incidences.filter(i => i.studentDni === consultasResult.dni).length === 0 ? (
+                      <div className="bg-white p-20 rounded-[3rem] shadow-xl border border-slate-100 text-center">
+                        <div className="w-20 h-20 bg-emerald-50 text-emerald-500 rounded-full flex items-center justify-center mx-auto mb-6">
+                          <CheckCircle size={40} />
+                        </div>
+                        <h3 className="text-2xl font-black text-slate-800 uppercase tracking-tight">Sin Alertas</h3>
+                        <p className="text-slate-400 font-medium mt-2">No se han registrado incidencias para este estudiante.</p>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 gap-6">
+                        {incidences.filter(i => i.studentDni === consultasResult.dni).map(inc => (
+                          <div key={inc.id} className="bg-white p-8 rounded-[2.5rem] shadow-xl border-l-8 border-slate-200 hover:shadow-2xl transition-all" style={{ borderLeftColor: inc.severity === 'grave' ? '#ef4444' : inc.severity === 'moderado' ? '#f97316' : '#3b82f6' }}>
+                            <div className="flex justify-between items-start mb-4">
+                              <div>
+                                <span className={`px-3 py-1 rounded-full font-black text-[8px] uppercase tracking-widest ${
+                                  inc.severity === 'leve' ? 'bg-blue-50 text-blue-600' :
+                                  inc.severity === 'moderado' ? 'bg-orange-50 text-orange-600' :
+                                  'bg-red-50 text-red-600'
+                                }`}>
+                                  Gravedad: {inc.severity}
+                                </span>
+                                <h4 className="text-xl font-black text-slate-800 uppercase tracking-tight mt-2">{inc.type}</h4>
+                              </div>
+                              <div className="text-right">
+                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{inc.date}</p>
+                                <span className="inline-block mt-2 px-3 py-1 bg-slate-100 text-slate-600 rounded-lg font-black text-[8px] uppercase tracking-widest">
+                                  Estado: {inc.status}
+                                </span>
+                              </div>
+                            </div>
+                            <p className="text-slate-600 font-medium leading-relaxed bg-slate-50 p-6 rounded-2xl border border-slate-100 italic">
+                              "{inc.description}"
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {activeConsultasTab === 'horario' && (
+                  <div className="space-y-8 animate-fade-in" id="public-schedule-view">
+                    <div className="flex justify-between items-center">
+                      <h3 className="text-2xl font-black text-slate-800 uppercase tracking-tight">Horario Semanal</h3>
+                      <button 
+                        onClick={() => {
+                          const element = document.getElementById('public-schedule-view');
+                          if (element) {
+                            htmlToImage.toJpeg(element, { quality: 0.95, backgroundColor: '#f8fafc' })
+                              .then((dataUrl) => {
+                                const link = document.createElement('a');
+                                link.download = `horario_${consultasResult.nombre}_${consultasResult.apellido}.jpg`;
+                                link.href = dataUrl;
+                                link.click();
+                              });
+                          }
+                        }}
+                        className="bg-slate-900 text-white px-6 py-3 rounded-xl font-black uppercase tracking-widest text-[10px] shadow-lg hover:bg-slate-800 transition-all flex items-center gap-2"
+                      >
+                        <Download size={16} /> Descargar JPG
+                      </button>
+                    </div>
+
+                    <div className="bg-white rounded-[3rem] shadow-2xl border border-slate-200 overflow-hidden">
+                      <div className="grid grid-cols-8 text-white" style={{ backgroundColor: consultasResult.primaryColor || globalConfig.theme.primaryColor }}>
+                        <div className="p-4 text-[9px] font-black uppercase tracking-widest border-r border-white/10">Hora</div>
+                        {['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'].map(dia => (
+                          <div key={dia} className="p-4 text-[9px] font-black uppercase tracking-widest text-center border-r border-white/10 last:border-0">{dia}</div>
+                        ))}
+                      </div>
+                      
+                      <div className="divide-y divide-slate-100">
+                        {/* Simplified schedule view for public */}
+                        {Array.from({ length: 10 }).map((_, i) => {
+                          const hour = 7 + i;
+                          const timeStr = `${hour.toString().padStart(2, '0')}:00`;
+                          return (
+                            <div key={i} className="grid grid-cols-8 hover:bg-slate-50 transition-colors">
+                              <div className="p-4 text-[10px] font-black text-slate-400 border-r border-slate-100 bg-slate-50/50">{timeStr}</div>
+                              {['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'].map(dia => {
+                                const sch = schedules.find(s => s.dia === dia && s.inicio <= timeStr && s.fin > timeStr && (s.targetId === consultasResult.id || gradeLevels.find(gl => gl.id === s.targetId && gl.nombre === consultasResult.grado && gl.seccion === consultasResult.seccion)));
+                                return (
+                                  <div key={dia} className="p-2 border-r border-slate-100 last:border-0 min-h-[60px] flex items-center justify-center">
+                                    {sch && (
+                                      <div className={`w-full h-full p-2 rounded-xl flex flex-col items-center justify-center text-center shadow-sm border ${sch.type === 'clase' ? 'bg-blue-50 border-blue-100 text-blue-700' : 'bg-emerald-50 border-emerald-100 text-emerald-700'}`}>
+                                        <p className="text-[8px] font-black uppercase leading-tight">{sch.materia || (sch.type === 'clase' ? 'Clase' : 'Laboral')}</p>
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Admin Login Modal */}
+        {isAdminLoginModalOpen && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-slate-950/80 backdrop-blur-xl animate-fade-in">
+            <div className="bg-white rounded-[3rem] shadow-2xl w-full max-w-sm overflow-hidden animate-slide-up">
+              <div className="p-8 border-b border-slate-100 flex justify-between items-center bg-slate-900 text-white">
+                <div>
+                  <h2 className="text-xl font-black uppercase tracking-widest">Acceso Admin</h2>
+                  <p className="text-slate-400 text-[9px] font-bold uppercase mt-1">Ingrese su clave maestra</p>
+                </div>
+                <button onClick={() => setIsAdminLoginModalOpen(false)} className="hover:bg-white/20 p-2 rounded-full transition-all"><X size={20} /></button>
+              </div>
+              <form onSubmit={handleAdminLogin} className="p-8 space-y-6">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Contraseña</label>
+                  <div className="relative">
+                    <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                    <input 
+                      type="password" 
+                      autoFocus
+                      className="w-full pl-12 pr-4 py-4 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-lg outline-none transition-all"
+                      value={adminLoginPassword}
+                      onChange={(e) => setAdminLoginPassword(e.target.value)}
+                      placeholder="••••••••"
+                      required
+                    />
+                  </div>
+                </div>
+                <button type="submit" className="w-full py-5 bg-blue-600 text-white rounded-2xl font-black uppercase tracking-widest text-xs shadow-xl hover:bg-blue-700 transition-all">
+                  Ingresar al Sistema
+                </button>
+              </form>
+            </div>
+          </div>
+        )}
+
+        <div className="absolute bottom-8 text-[10px] font-black text-slate-300 uppercase tracking-[0.5em]">
+          {globalConfig.footerText || `${globalConfig.siteName} © 2024`}
+        </div>
+      </div>
+    );
+  }
+
   if (!isAuthenticated) {
     return (
       <div className="h-full flex items-center justify-center gradient-brand p-6" style={{ background: `linear-gradient(135deg, ${globalConfig.theme.primaryColor} 0%, ${globalConfig.theme.secondaryColor} 100%)` }}>
@@ -1258,6 +1736,7 @@ const App = () => {
     { id: 'estudiantes', icon: Database, label: 'Base de Datos' },
     { id: 'asistencia', icon: CalendarCheck, label: 'Asistencia' },
     { id: 'reportes', icon: FileText, label: 'Reportes' },
+    { id: 'alerta', icon: AlertCircle, label: 'ALERTA' },
     { id: 'calificaciones', icon: BarChart3, label: 'Calificaciones' },
     { id: 'mi-panel', icon: User, label: 'Mi Panel' },
     { id: 'config', icon: Settings, label: 'Configuración' }
@@ -1903,21 +2382,21 @@ const App = () => {
 
           {/* Asistencia Section */}
           {activeTab === 'asistencia' && (
-            <div className="animate-slide-up space-y-8">
-               <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+            <div className="animate-slide-up space-y-6 md:space-y-8">
+               <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 md:gap-6">
                  <div>
-                   <h2 className="text-4xl font-black text-slate-800 tracking-tight">{activeConfig.siteName}</h2>
-                   <p className="text-slate-500 font-medium">Gestión de Asistencia - Control institucional en tiempo real.</p>
+                   <h2 className="text-2xl md:text-4xl font-black text-slate-800 tracking-tight">{activeConfig.siteName}</h2>
+                   <p className="text-slate-500 text-xs md:text-base font-medium">Gestión de Asistencia - Control institucional en tiempo real.</p>
                  </div>
                </header>
 
                <StatCardsAttendance statsAtt={statsAtt} />
 
-               <div className="bg-white rounded-[3.5rem] shadow-2xl overflow-hidden border border-slate-200 p-8 space-y-8">
-                  <div className="flex flex-col md:flex-row items-center justify-between gap-8">
+               <div className="bg-white rounded-3xl md:rounded-[3.5rem] shadow-2xl overflow-hidden border border-slate-200 p-6 md:p-8 space-y-6 md:space-y-8">
+                  <div className="flex flex-col md:flex-row items-center justify-between gap-6 md:gap-8">
                      <div className="w-full md:w-auto space-y-3">
-                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em] ml-2">Seleccionar Estado</label>
-                        <div className="flex flex-wrap gap-2">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em] ml-2 text-center md:text-left block">Seleccionar Estado</label>
+                        <div className="flex justify-center md:justify-start flex-wrap gap-2">
                           <StatusButton active={selectedQuickStatus === 'entrada'} onClick={() => setSelectedQuickStatus('entrada')} status="entrada" icon={UserCheck} />
                           <StatusButton active={selectedQuickStatus === 'tardanza'} onClick={() => setSelectedQuickStatus('tardanza')} status="tardanza" icon={Clock} />
                           <StatusButton active={selectedQuickStatus === 'salida'} onClick={() => setSelectedQuickStatus('salida')} status="salida" icon={LogOutIcon} />
@@ -1927,11 +2406,11 @@ const App = () => {
 
                      <div className="w-full md:w-auto space-y-3">
                         <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em] ml-2 text-center md:text-right block">Método de Registro</label>
-                        <div className="flex gap-4">
-                           <button onClick={() => setIsDniModalOpen(true)} className="flex-1 md:flex-none flex items-center justify-center gap-4 bg-slate-900 text-white px-10 py-5 rounded-2xl font-black uppercase tracking-widest text-[11px] shadow-xl hover:bg-black transition-all transform hover:-translate-y-1">
+                        <div className="flex flex-col sm:flex-row gap-4">
+                           <button onClick={() => setIsDniModalOpen(true)} className="w-full sm:w-auto flex items-center justify-center gap-4 bg-slate-900 text-white px-6 md:px-10 py-4 md:py-5 rounded-2xl font-black uppercase tracking-widest text-[10px] md:text-[11px] shadow-xl hover:bg-black transition-all transform hover:-translate-y-1">
                              <Keyboard size={20} /> Registro por DNI
                            </button>
-                           <button onClick={startScanner} className="flex-1 md:flex-none flex items-center justify-center gap-4 bg-blue-600 text-white px-10 py-5 rounded-2xl font-black uppercase tracking-widest text-[11px] shadow-xl hover:bg-blue-700 transition-all transform hover:-translate-y-1">
+                           <button onClick={startScanner} className="w-full sm:w-auto flex items-center justify-center gap-4 bg-blue-600 text-white px-6 md:px-10 py-4 md:py-5 rounded-2xl font-black uppercase tracking-widest text-[10px] md:text-[11px] shadow-xl hover:bg-blue-700 transition-all transform hover:-translate-y-1">
                              <Scan size={20} /> Escáner QR
                            </button>
                         </div>
@@ -1939,18 +2418,18 @@ const App = () => {
                   </div>
                </div>
 
-               <div className="bg-white p-6 rounded-[3rem] shadow-xl border border-slate-100 flex flex-wrap gap-4 items-center">
-                  <div className="flex-1 relative min-w-[200px]">
+               <div className="bg-white p-4 md:p-6 rounded-2xl md:rounded-[3rem] shadow-xl border border-slate-100 flex flex-col md:flex-row gap-4 items-center">
+                  <div className="w-full md:flex-1 relative">
                     <Search className="absolute left-6 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
                     <input type="text" placeholder="Buscar en la bitácora..." className="w-full pl-14 pr-6 py-4 rounded-2xl bg-slate-50 border-none focus:ring-4 focus:ring-blue-100 font-bold" value={attSearch} onChange={(e) => setAttSearch(e.target.value)} />
                   </div>
-                  <div className="flex gap-3 items-center">
-                    <div className="bg-blue-600 text-white px-8 py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-lg">
+                  <div className="flex w-full md:w-auto gap-3 items-center">
+                    <div className="flex-1 md:flex-none text-center bg-blue-600 text-white px-6 md:px-8 py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-lg">
                       Bitácora: {filteredAttendance.length}
                     </div>
                     <button 
                       onClick={clearAttendanceHistory}
-                      className="bg-rose-50 text-rose-600 px-6 py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest border border-rose-100 hover:bg-rose-600 hover:text-white transition-all shadow-sm flex items-center gap-2"
+                      className="flex-1 md:flex-none justify-center bg-rose-50 text-rose-600 px-6 py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest border border-rose-100 hover:bg-rose-600 hover:text-white transition-all shadow-sm flex items-center gap-2"
                       title="Vaciar todo el historial"
                     >
                       <Trash2 size={16} /> Vaciar
@@ -1958,65 +2437,344 @@ const App = () => {
                   </div>
                </div>
 
-               <div className="bg-white rounded-[3.5rem] shadow-2xl overflow-hidden border border-slate-100">
+               <div className="bg-white rounded-2xl md:rounded-[3.5rem] shadow-2xl overflow-hidden border border-slate-100">
                   <div className="overflow-x-auto">
                     <table className="w-full text-left min-w-[1000px]">
                     <thead className="bg-slate-50 border-b border-slate-100">
                       <tr>
-                        <th className="p-8 font-black text-slate-400 uppercase text-[10px] tracking-widest">DNI</th>
-                        <th className="p-8 font-black text-slate-400 uppercase text-[10px] tracking-widest">Persona</th>
-                        <th className="p-8 font-black text-slate-400 uppercase text-[10px] tracking-widest">Rol</th>
-                        <th className="p-8 font-black text-slate-400 uppercase text-[10px] tracking-widest">Fecha</th>
-                        <th className="p-8 font-black text-slate-400 uppercase text-[10px] tracking-widest text-emerald-600">Ingreso</th>
-                        <th className="p-8 font-black text-slate-400 uppercase text-[10px] tracking-widest text-blue-600">Salida</th>
-                        <th className="p-8 font-black text-slate-400 uppercase text-[10px] tracking-widest">Tipo</th>
-                        <th className="p-8 font-black text-slate-400 uppercase text-[10px] tracking-widest">Acciones</th>
+                        <th className="p-4 md:p-8 font-black text-slate-400 uppercase text-[10px] tracking-widest">DNI</th>
+                        <th className="p-4 md:p-8 font-black text-slate-400 uppercase text-[10px] tracking-widest">Persona</th>
+                        <th className="p-4 md:p-8 font-black text-slate-400 uppercase text-[10px] tracking-widest">Rol</th>
+                        <th className="p-4 md:p-8 font-black text-slate-400 uppercase text-[10px] tracking-widest">Fecha</th>
+                        <th className="p-4 md:p-8 font-black text-slate-400 uppercase text-[10px] tracking-widest text-emerald-600">Ingreso</th>
+                        <th className="p-4 md:p-8 font-black text-slate-400 uppercase text-[10px] tracking-widest text-blue-600">Salida</th>
+                        <th className="p-4 md:p-8 font-black text-slate-400 uppercase text-[10px] tracking-widest">Tipo</th>
+                        <th className="p-4 md:p-8 font-black text-slate-400 uppercase text-[10px] tracking-widest">Acciones</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-50">
                       {filteredAttendance.map(record => (
                         <tr key={record.id} className="hover:bg-slate-50/50 transition-colors animate-fade-in group">
-                          <td className="p-8 font-mono text-slate-500 font-bold">{record.studentDni}</td>
-                          <td className="p-8 font-black text-slate-800 text-xl uppercase tracking-tighter truncate max-w-[200px]">{record.studentName}</td>
-                          <td className="p-8">
-                            <span className={`px-4 py-2 rounded-full text-[10px] font-black uppercase border ${record.studentRol === 'Docente' ? 'text-indigo-600 border-indigo-100' : 'text-blue-600 border-blue-100'}`}>
+                          <td className="p-4 md:p-8 font-mono text-slate-500 font-bold text-xs md:text-base">{record.studentDni}</td>
+                          <td className="p-4 md:p-8 font-black text-slate-800 text-sm md:text-xl uppercase tracking-tighter truncate max-w-[150px] md:max-w-[200px]">{record.studentName}</td>
+                          <td className="p-4 md:p-8">
+                            <span className={`px-3 md:px-4 py-1 md:py-2 rounded-full text-[8px] md:text-[10px] font-black uppercase border ${record.studentRol === 'Docente' ? 'text-indigo-600 border-indigo-100' : 'text-blue-600 border-blue-100'}`}>
                               {record.studentRol}
                             </span>
                           </td>
-                          <td className="p-8 text-[11px] font-bold text-slate-500">{record.fecha}</td>
-                          <td className="p-8">
+                          <td className="p-4 md:p-8 text-[9px] md:text-[11px] font-bold text-slate-500">{record.fecha}</td>
+                          <td className="p-4 md:p-8">
                             { record.horaEntrada ? (
-                              <span className="font-mono text-lg font-black text-emerald-600">{record.horaEntrada}</span>
+                              <span className="font-mono text-sm md:text-lg font-black text-emerald-600">{record.horaEntrada}</span>
                             ) : (
                               <span className="text-slate-200">—</span>
                             )}
                           </td>
-                          <td className="p-8">
+                          <td className="p-4 md:p-8">
                             { record.horaSalida ? (
-                              <span className="font-mono text-lg font-black text-blue-600">{record.horaSalida}</span>
+                              <span className="font-mono text-sm md:text-lg font-black text-blue-600">{record.horaSalida}</span>
                             ) : (
                               <span className="text-slate-200">—</span>
                             )}
                           </td>
-                          <td className="p-8">
+                          <td className="p-4 md:p-8">
                              <StatusBadge status={record.estado} />
                           </td>
-                          <td className="p-8">
+                          <td className="p-4 md:p-8">
                             <div className="flex gap-2">
-                               <button onClick={() => setEditingAttendance(record)} className="p-3 text-blue-500 hover:bg-blue-600 hover:text-white rounded-xl transition-all bg-blue-50">
-                                 <Edit size={16} />
+                               <button onClick={() => setEditingAttendance(record)} className="p-2 md:p-3 text-blue-500 hover:bg-blue-600 hover:text-white rounded-xl transition-all bg-blue-50">
+                                 <Edit size={14} md:size={16} />
                                </button>
-                               <button onClick={() => deleteAttendance(record.id)} className="p-3 text-rose-500 hover:bg-rose-600 hover:text-white rounded-xl transition-all bg-rose-50">
-                                 <Trash2 size={16} />
+                               <button onClick={() => deleteAttendance(record.id)} className="p-2 md:p-3 text-rose-500 hover:bg-rose-600 hover:text-white rounded-xl transition-all bg-rose-50">
+                                 <Trash2 size={14} md:size={16} />
                                </button>
                             </div>
                           </td>
                         </tr>
                       ))}
                     </tbody>
-                  </table>
-                </div>
+                    </table>
+                  </div>
                </div>
+            </div>
+          )}
+
+          {/* ALERTA Section */}
+          {activeTab === 'alerta' && (
+            <div className="animate-slide-up space-y-8">
+              <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+                <div>
+                  <h2 className="text-4xl font-black text-slate-800 tracking-tight">ALERTA</h2>
+                  <p className="text-slate-500 font-medium">Gestión de Incidencias y Reportes de Conducta.</p>
+                </div>
+                <div className="flex flex-row bg-white p-2 rounded-2xl shadow-xl border border-slate-100 overflow-x-auto no-scrollbar">
+                  <button 
+                    onClick={() => setActiveAlertaSubTab('registro')}
+                    className={`px-6 py-3 rounded-xl font-black uppercase tracking-widest text-[10px] transition-all whitespace-nowrap ${activeAlertaSubTab === 'registro' ? 'bg-red-600 text-white shadow-lg' : 'bg-white text-slate-400 border border-slate-200 hover:border-red-200'}`}
+                  >
+                    Registrar Incidencia
+                  </button>
+                  <button 
+                    onClick={() => setActiveAlertaSubTab('historial')}
+                    className={`px-6 py-3 rounded-xl font-black uppercase tracking-widest text-[10px] transition-all whitespace-nowrap ${activeAlertaSubTab === 'historial' ? 'bg-red-600 text-white shadow-lg' : 'bg-white text-slate-400 border border-slate-200 hover:border-red-200'}`}
+                  >
+                    Historial
+                  </button>
+                </div>
+              </header>
+
+              {activeAlertaSubTab === 'registro' && (
+                <div className="bg-white p-8 rounded-[3.5rem] shadow-2xl border border-slate-200 space-y-8">
+                  <div className="space-y-4">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Buscar Alumno (DNI, Nombre o Grado)</label>
+                    <div className="relative">
+                      <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                      <input 
+                        type="text" 
+                        placeholder="Buscar..." 
+                        className="w-full pl-12 pr-4 py-4 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-red-500 font-black text-lg outline-none transition-all"
+                        value={personalSearchTerm}
+                        onChange={(e) => setPersonalSearchTerm(e.target.value)}
+                      />
+                    </div>
+                  </div>
+
+                  {personalSearchTerm && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 max-h-60 overflow-y-auto p-2 custom-scrollbar">
+                      {students.filter(s => 
+                        s.nombre.toLowerCase().includes(personalSearchTerm.toLowerCase()) || 
+                        s.apellido.toLowerCase().includes(personalSearchTerm.toLowerCase()) || 
+                        s.dni.includes(personalSearchTerm) ||
+                        s.grado.toLowerCase().includes(personalSearchTerm.toLowerCase())
+                      ).map(student => (
+                        <button 
+                          key={student.id}
+                          onClick={() => {
+                            setSelectedPersonalStudent(student);
+                            setPersonalSearchTerm("");
+                          }}
+                          className="flex items-center gap-4 p-4 rounded-2xl border-2 border-slate-100 hover:border-red-500 hover:bg-red-50 transition-all text-left"
+                        >
+                          <div className="w-12 h-12 rounded-full bg-slate-200 overflow-hidden flex-shrink-0">
+                            {student.foto ? <img src={student.foto} className="w-full h-full object-cover" /> : <User className="w-full h-full p-2 text-slate-400" />}
+                          </div>
+                          <div>
+                            <p className="font-black text-slate-800 text-sm">{student.nombre} {student.apellido}</p>
+                            <p className="text-[10px] font-bold text-slate-400 uppercase">{student.grado} - {student.dni}</p>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {selectedPersonalStudent && (
+                    <div className="animate-fade-in space-y-8">
+                      <div className="flex flex-col md:flex-row gap-8 p-8 bg-slate-50 rounded-[2.5rem] border-2 border-slate-100 relative">
+                        <button onClick={() => setSelectedPersonalStudent(null)} className="absolute top-6 right-6 p-2 hover:bg-white rounded-full transition-all text-slate-400"><X size={20} /></button>
+                        <div className="w-32 h-32 rounded-[2rem] bg-white shadow-xl border-4 border-white overflow-hidden flex-shrink-0">
+                          {selectedPersonalStudent.foto ? <img src={selectedPersonalStudent.foto} className="w-full h-full object-cover" /> : <User className="w-full h-full p-6 text-slate-200" />}
+                        </div>
+                        <div className="space-y-4 flex-1">
+                          <div>
+                            <h3 className="text-2xl font-black text-slate-800 uppercase tracking-tight">{selectedPersonalStudent.nombre} {selectedPersonalStudent.apellido}</h3>
+                            <p className="text-red-600 font-black text-[10px] uppercase tracking-widest mt-1">Ficha del Estudiante</p>
+                          </div>
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                            <div>
+                              <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">DNI</p>
+                              <p className="font-bold text-slate-700 text-sm">{selectedPersonalStudent.dni}</p>
+                            </div>
+                            <div>
+                              <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Nivel</p>
+                              <p className="font-bold text-slate-700 text-sm">{selectedPersonalStudent.nivel}</p>
+                            </div>
+                            <div>
+                              <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Grado</p>
+                              <p className="font-bold text-slate-700 text-sm">{selectedPersonalStudent.grado}</p>
+                            </div>
+                            <div>
+                              <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Sección</p>
+                              <p className="font-bold text-slate-700 text-sm">{selectedPersonalStudent.seccion}</p>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      <form onSubmit={(e: any) => {
+                        e.preventDefault();
+                        const formData = new FormData(e.currentTarget);
+                        const newIncidence: Incidence = {
+                          id: Date.now().toString(),
+                          studentId: selectedPersonalStudent.id,
+                          studentName: `${selectedPersonalStudent.nombre} ${selectedPersonalStudent.apellido}`,
+                          studentDni: selectedPersonalStudent.dni,
+                          studentGrade: selectedPersonalStudent.grado,
+                          type: formData.get('type') as string,
+                          description: formData.get('description') as string,
+                          severity: formData.get('severity') as IncidenceSeverity,
+                          status: 'registrada',
+                          date: new Date().toLocaleString(),
+                          registeredBy: currentUser?.fullName || currentUser?.username || 'Admin'
+                        };
+                        setIncidences([newIncidence, ...incidences]);
+                        setSelectedPersonalStudent(null);
+                        setToast({ message: "Incidencia registrada correctamente.", type: 'success' });
+                      }} className="space-y-6">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                          <div className="space-y-2">
+                            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Tipo de Incidencia</label>
+                            <select name="type" required className="w-full p-4 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-red-500 font-bold text-slate-700 outline-none transition-all">
+                              <option value="">Seleccione tipo...</option>
+                              {incidenceTypes.map(type => (
+                                <option key={type.id} value={type.name}>{type.name}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="space-y-2">
+                            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Nivel de Gravedad</label>
+                            <div className="flex gap-2">
+                              {['leve', 'moderado', 'grave'].map((sev) => (
+                                <label key={sev} className="flex-1">
+                                  <input type="radio" name="severity" value={sev} required className="hidden peer" />
+                                  <div className={`text-center p-4 rounded-2xl border-2 border-slate-100 cursor-pointer font-black text-[10px] uppercase tracking-widest transition-all peer-checked:bg-red-600 peer-checked:text-white peer-checked:border-red-600 hover:bg-slate-50`}>
+                                    {sev}
+                                  </div>
+                                </label>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Descripción de la Incidencia</label>
+                          <textarea name="description" required rows={4} placeholder="Detalle lo sucedido..." className="w-full p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-red-500 font-bold text-slate-700 outline-none transition-all resize-none" />
+                        </div>
+                        <button type="submit" className="w-full py-5 bg-red-600 text-white rounded-2xl font-black uppercase tracking-widest text-xs shadow-xl hover:bg-red-700 transition-all">Registrar Alerta</button>
+                      </form>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {activeAlertaSubTab === 'historial' && (
+                <div className="space-y-8">
+                  <div className="bg-white p-8 rounded-[3.5rem] shadow-2xl border border-slate-200 space-y-6">
+                    <div className="flex flex-col md:flex-row justify-between items-center gap-6">
+                      <div className="flex items-center gap-4">
+                        <div className="bg-red-50 p-4 rounded-2xl text-red-600">
+                          <AlertCircle size={24} />
+                        </div>
+                        <div>
+                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Total Incidencias</p>
+                          <h4 className="text-2xl font-black text-slate-800">{incidences.length}</h4>
+                        </div>
+                      </div>
+                      <div className="relative w-full md:w-96">
+                        <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                        <input 
+                          type="text" 
+                          placeholder="Buscar en historial..." 
+                          className="w-full pl-12 pr-4 py-3 rounded-xl bg-slate-50 border-none focus:ring-2 focus:ring-red-500 font-bold text-sm"
+                          value={reportSearchTerm}
+                          onChange={(e) => setReportSearchTerm(e.target.value)}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left border-separate border-spacing-y-3">
+                        <thead>
+                          <tr className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">
+                            <th className="px-6 py-4">Estudiante</th>
+                            <th className="px-6 py-4">Tipo / Fecha</th>
+                            <th className="px-6 py-4">Gravedad</th>
+                            <th className="px-6 py-4">Estado</th>
+                            <th className="px-6 py-4 text-right">Acciones</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {incidences.filter(inc => 
+                            inc.studentName.toLowerCase().includes(reportSearchTerm.toLowerCase()) ||
+                            inc.studentDni.includes(reportSearchTerm) ||
+                            inc.type.toLowerCase().includes(reportSearchTerm.toLowerCase())
+                          ).map((inc) => (
+                            <tr key={inc.id} className="bg-white hover:bg-slate-50 transition-all group shadow-sm rounded-2xl">
+                              <td className="px-6 py-4 first:rounded-l-2xl">
+                                <p className="font-black text-slate-800 text-sm">{inc.studentName}</p>
+                                <p className="text-[10px] font-bold text-slate-400 uppercase">{inc.studentGrade} - {inc.studentDni}</p>
+                              </td>
+                              <td className="px-6 py-4">
+                                <p className="font-bold text-slate-700 text-xs uppercase">{inc.type}</p>
+                                <p className="text-[10px] font-medium text-slate-400 mt-1">{inc.date}</p>
+                              </td>
+                              <td className="px-6 py-4">
+                                <span className={`px-3 py-1 rounded-full font-black text-[8px] uppercase tracking-widest ${
+                                  inc.severity === 'leve' ? 'bg-blue-50 text-blue-600' :
+                                  inc.severity === 'moderado' ? 'bg-orange-50 text-orange-600' :
+                                  'bg-red-50 text-red-600'
+                                }`}>
+                                  {inc.severity}
+                                </span>
+                              </td>
+                              <td className="px-6 py-4">
+                                <select 
+                                  value={inc.status}
+                                  onChange={(e) => {
+                                    const updated = incidences.map(i => i.id === inc.id ? { ...i, status: e.target.value as IncidenceStatus } : i);
+                                    setIncidences(updated);
+                                  }}
+                                  className="bg-slate-50 border-none rounded-lg p-2 font-bold text-[10px] uppercase tracking-widest text-slate-600 outline-none focus:ring-2 focus:ring-red-500"
+                                >
+                                  <option value="registrada">Registrada</option>
+                                  <option value="en evaluación">En Evaluación</option>
+                                  <option value="en seguimiento">En Seguimiento</option>
+                                  <option value="resuelta">Resuelta</option>
+                                  <option value="escalada a un caso mayor">Escalada</option>
+                                </select>
+                              </td>
+                              <td className="px-6 py-4 last:rounded-r-2xl text-right">
+                                <div className="flex justify-end gap-2">
+                                  <button 
+                                    onClick={() => setEditingIncidence(inc)}
+                                    className="p-2 bg-blue-50 text-blue-600 rounded-xl hover:bg-blue-600 hover:text-white transition-all"
+                                    title="Editar"
+                                  >
+                                    <Edit size={16} />
+                                  </button>
+                                  <button 
+                                    onClick={() => {
+                                      const student = students.find(s => s.id === inc.studentId);
+                                      if (student && student.celularApoderado) {
+                                        const message = `ALERTA INSTITUCIONAL: Se ha registrado una incidencia de tipo "${inc.type}" para el alumno ${inc.studentName}. Gravedad: ${inc.severity.toUpperCase()}. Descripción: ${inc.description}`;
+                                        window.open(`https://wa.me/${student.celularApoderado.replace(/\D/g, '')}?text=${encodeURIComponent(message)}`, '_blank');
+                                      } else {
+                                        alert("No se encontró número de WhatsApp registrado para el apoderado.");
+                                      }
+                                    }}
+                                    className="p-2 bg-emerald-50 text-emerald-600 rounded-xl hover:bg-emerald-600 hover:text-white transition-all"
+                                    title="Enviar por WhatsApp"
+                                  >
+                                    <Phone size={16} />
+                                  </button>
+                                  <button 
+                                    onClick={() => {
+                                      if(confirm('¿Está seguro de eliminar este registro?')) {
+                                        setIncidences(incidences.filter(i => i.id !== inc.id));
+                                      }
+                                    }}
+                                    className="p-2 bg-red-50 text-red-600 rounded-xl hover:bg-red-600 hover:text-white transition-all"
+                                  >
+                                    <Trash2 size={16} />
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -2083,6 +2841,10 @@ const App = () => {
                     onClick={() => setActivePanelSubTab('horarios')}
                     className={`px-6 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all whitespace-nowrap ${activePanelSubTab === 'horarios' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:text-slate-600'}`}
                   >Horarios</button>
+                  <button 
+                    onClick={() => setActivePanelSubTab('alerta')}
+                    className={`px-6 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all whitespace-nowrap ${activePanelSubTab === 'alerta' ? 'bg-red-600 text-white shadow-lg' : 'text-red-400 hover:text-red-600'}`}
+                  >Alerta</button>
                 </div>
               </header>
 
@@ -2145,6 +2907,72 @@ const App = () => {
 
                   {/* Activity & Stats */}
                   <div className="lg:col-span-2 space-y-8">
+                    {/* Public Modules Config */}
+                    {currentUser?.role === 'admin' && (
+                      <div className="bg-white p-10 rounded-[3.5rem] shadow-2xl border border-slate-200 space-y-8 animate-fade-in">
+                        <div>
+                          <h3 className="text-2xl font-black text-slate-800 uppercase tracking-tight">Módulos de Consulta Pública</h3>
+                          <p className="text-slate-400 text-[10px] font-bold uppercase tracking-widest mt-1">Configure qué información será visible para el público</p>
+                        </div>
+                        
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                          <button 
+                            onClick={() => {
+                              const current = globalConfig.publicModules || { attendance: true, alerts: true, schedule: true };
+                              const newModules = { ...current, attendance: !current.attendance };
+                              setGlobalConfig({ ...globalConfig, publicModules: newModules });
+                              setToast({ message: `Módulo Asistencia ${!current.attendance ? 'habilitado' : 'deshabilitado'}`, type: 'success' });
+                            }}
+                            className={`p-8 rounded-[2.5rem] border-2 transition-all flex flex-col items-center gap-4 group ${(globalConfig.publicModules?.attendance ?? true) ? 'bg-emerald-50 border-emerald-200' : 'bg-slate-50 border-slate-100 opacity-60'}`}
+                          >
+                            <div className={`p-4 rounded-2xl transition-all ${(globalConfig.publicModules?.attendance ?? true) ? 'bg-emerald-600 text-white shadow-lg' : 'bg-slate-200 text-slate-400'}`}>
+                              <CalendarCheck size={24} />
+                            </div>
+                            <div className="text-center">
+                              <p className={`font-black uppercase tracking-widest text-[10px] ${(globalConfig.publicModules?.attendance ?? true) ? 'text-emerald-900' : 'text-slate-400'}`}>Asistencia</p>
+                              <p className="text-[9px] font-bold text-slate-400 uppercase mt-1">{(globalConfig.publicModules?.attendance ?? true) ? 'Visible' : 'Oculto'}</p>
+                            </div>
+                          </button>
+
+                          <button 
+                            onClick={() => {
+                              const current = globalConfig.publicModules || { attendance: true, alerts: true, schedule: true };
+                              const newModules = { ...current, alerts: !current.alerts };
+                              setGlobalConfig({ ...globalConfig, publicModules: newModules });
+                              setToast({ message: `Módulo Alertas ${!current.alerts ? 'habilitado' : 'deshabilitado'}`, type: 'success' });
+                            }}
+                            className={`p-8 rounded-[2.5rem] border-2 transition-all flex flex-col items-center gap-4 group ${(globalConfig.publicModules?.alerts ?? true) ? 'bg-rose-50 border-rose-200' : 'bg-slate-50 border-slate-100 opacity-60'}`}
+                          >
+                            <div className={`p-4 rounded-2xl transition-all ${(globalConfig.publicModules?.alerts ?? true) ? 'bg-rose-600 text-white shadow-lg' : 'bg-slate-200 text-slate-400'}`}>
+                              <AlertCircle size={24} />
+                            </div>
+                            <div className="text-center">
+                              <p className={`font-black uppercase tracking-widest text-[10px] ${(globalConfig.publicModules?.alerts ?? true) ? 'text-rose-900' : 'text-slate-400'}`}>Alertas</p>
+                              <p className="text-[9px] font-bold text-slate-400 uppercase mt-1">{(globalConfig.publicModules?.alerts ?? true) ? 'Visible' : 'Oculto'}</p>
+                            </div>
+                          </button>
+
+                          <button 
+                            onClick={() => {
+                              const current = globalConfig.publicModules || { attendance: true, alerts: true, schedule: true };
+                              const newModules = { ...current, schedule: !current.schedule };
+                              setGlobalConfig({ ...globalConfig, publicModules: newModules });
+                              setToast({ message: `Módulo Horario ${!current.schedule ? 'habilitado' : 'deshabilitado'}`, type: 'success' });
+                            }}
+                            className={`p-8 rounded-[2.5rem] border-2 transition-all flex flex-col items-center gap-4 group ${(globalConfig.publicModules?.schedule ?? true) ? 'bg-blue-50 border-blue-200' : 'bg-slate-50 border-slate-100 opacity-60'}`}
+                          >
+                            <div className={`p-4 rounded-2xl transition-all ${(globalConfig.publicModules?.schedule ?? true) ? 'bg-blue-600 text-white shadow-lg' : 'bg-slate-200 text-slate-400'}`}>
+                              <Clock size={24} />
+                            </div>
+                            <div className="text-center">
+                              <p className={`font-black uppercase tracking-widest text-[10px] ${(globalConfig.publicModules?.schedule ?? true) ? 'text-blue-900' : 'text-slate-400'}`}>Horario</p>
+                              <p className="text-[9px] font-bold text-slate-400 uppercase mt-1">{(globalConfig.publicModules?.schedule ?? true) ? 'Visible' : 'Oculto'}</p>
+                            </div>
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                       <div className="bg-white p-8 rounded-[3rem] shadow-xl border border-slate-100">
                         <div className="flex items-center gap-4 mb-6">
@@ -2348,6 +3176,88 @@ const App = () => {
                 </div>
               )}
 
+              {activePanelSubTab === 'alerta' && (
+                <div className="bg-white p-10 rounded-[3.5rem] shadow-2xl border border-slate-200 space-y-8 animate-fade-in">
+                  <div className="flex justify-between items-center">
+                    <div>
+                      <h3 className="text-2xl font-black text-slate-800 uppercase tracking-tight">Tipos de Incidencia</h3>
+                      <p className="text-slate-400 text-[10px] font-bold uppercase tracking-widest mt-1">Configure las opciones disponibles en el módulo de alertas</p>
+                    </div>
+                    <button 
+                      onClick={() => setEditingIncidenceType({ id: '', name: '' })}
+                      className="bg-red-600 text-white px-6 py-3 rounded-xl font-black uppercase tracking-widest text-[10px] shadow-lg hover:bg-red-700 transition-all flex items-center gap-2"
+                    >
+                      <Plus size={16} /> Nuevo Tipo
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {incidenceTypes.map(type => (
+                      <div key={type.id} className="bg-slate-50 p-6 rounded-3xl border-2 border-slate-100 flex justify-between items-center group hover:border-red-200 transition-all">
+                        <span className="font-black text-slate-700 uppercase tracking-tight text-sm">{type.name}</span>
+                        <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button 
+                            onClick={() => setEditingIncidenceType(type)}
+                            className="p-2 bg-white text-blue-600 rounded-lg shadow-sm hover:bg-blue-600 hover:text-white transition-all"
+                          >
+                            <Edit size={14} />
+                          </button>
+                          <button 
+                            onClick={() => {
+                              if(confirm('¿Eliminar este tipo de incidencia?')) {
+                                setIncidencesTypes(incidenceTypes.filter(t => t.id !== type.id));
+                              }
+                            }}
+                            className="p-2 bg-white text-red-600 rounded-lg shadow-sm hover:bg-red-600 hover:text-white transition-all"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {editingIncidenceType && (
+                    <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-slate-950/80 backdrop-blur-xl animate-fade-in">
+                      <div className="bg-white rounded-[3rem] shadow-2xl w-full max-w-md overflow-hidden animate-slide-up">
+                        <div className="p-8 border-b border-slate-100 flex justify-between items-center bg-red-600 text-white">
+                          <div>
+                            <h2 className="text-xl font-black uppercase tracking-widest">{editingIncidenceType.id ? 'Editar Tipo' : 'Nuevo Tipo'}</h2>
+                            <p className="text-red-100 text-[9px] font-bold uppercase mt-1">Defina el nombre de la incidencia</p>
+                          </div>
+                          <button onClick={() => setEditingIncidenceType(null)} className="hover:bg-white/20 p-2 rounded-full transition-all"><X size={20} /></button>
+                        </div>
+                        <form onSubmit={(e: any) => {
+                          e.preventDefault();
+                          const name = new FormData(e.currentTarget).get('name') as string;
+                          if (editingIncidenceType.id) {
+                            setIncidencesTypes(incidenceTypes.map(t => t.id === editingIncidenceType.id ? { ...t, name } : t));
+                          } else {
+                            setIncidencesTypes([...incidenceTypes, { id: Date.now().toString(), name }]);
+                          }
+                          setEditingIncidenceType(null);
+                          setToast({ message: "Tipo de incidencia guardado.", type: 'success' });
+                        }} className="p-8 space-y-6">
+                          <div className="space-y-2">
+                            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Nombre del Tipo</label>
+                            <input 
+                              name="name" 
+                              defaultValue={editingIncidenceType.name} 
+                              required 
+                              autoFocus
+                              placeholder="Ej. Falta de uniforme" 
+                              className="w-full p-4 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-red-500 font-black text-lg outline-none transition-all" 
+                            />
+                          </div>
+                          <button type="submit" className="w-full py-5 bg-red-600 text-white rounded-2xl font-black uppercase tracking-widest text-xs shadow-xl hover:bg-red-700 transition-all">
+                            Guardar Tipo
+                          </button>
+                        </form>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
               {activePanelSubTab === 'horarios' && (
                 <div className="space-y-8">
                   {currentUser?.permissions.includes('horarios') ? (
@@ -2637,6 +3547,16 @@ const App = () => {
                             className="w-full p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-lg outline-none transition-all"
                           />
                         </div>
+                        <div className="space-y-3">
+                          <label className="flex items-center gap-2 text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2"><FileText size={14}/> Texto de Pie de Página</label>
+                          <input 
+                            type="text" 
+                            value={globalConfig.footerText} 
+                            onChange={(e) => setGlobalConfig({...globalConfig, footerText: e.target.value})}
+                            className="w-full p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-lg outline-none transition-all"
+                            placeholder="Control y Gestión 2026 © 2024"
+                          />
+                        </div>
                       </div>
 
                       {/* Logo Upload */}
@@ -2823,17 +3743,17 @@ const App = () => {
 
       {/* --- STUDENT MODAL - RESTRUCTURED PROFESSIONAL DESIGN --- */}
       {isStudentModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-slate-950/70 backdrop-blur-xl animate-fade-in">
-          <div className="bg-white rounded-[4rem] shadow-2xl w-full max-w-4xl overflow-hidden animate-slide-up border border-white/20">
-            <div className="p-12 border-b border-slate-100 flex justify-between items-center bg-blue-700 text-white">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 md:p-6 bg-slate-950/70 backdrop-blur-xl animate-fade-in">
+          <div className="bg-white rounded-[2.5rem] md:rounded-[4rem] shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto animate-slide-up border border-white/20">
+            <div className="p-6 md:p-10 border-b border-slate-100 flex justify-between items-center bg-blue-700 text-white sticky top-0 z-10">
               <div>
-                <h2 className="text-4xl font-black uppercase tracking-widest">{editingStudent ? 'Actualizar Registro' : 'Nuevo Registro'}</h2>
-                <p className="text-blue-100 text-xs font-bold uppercase mt-2">Diligencie todos los campos para el sistema {activeConfig.siteName}</p>
+                <h2 className="text-xl md:text-3xl font-black uppercase tracking-widest">{editingStudent ? 'Actualizar Registro' : 'Nuevo Registro'}</h2>
+                <p className="text-blue-100 text-[10px] font-bold uppercase mt-1">Diligencie los campos para {activeConfig.siteName}</p>
               </div>
-              <button onClick={() => setIsStudentModalOpen(false)} className="hover:bg-white/20 p-4 rounded-full transition-all"><X size={32} /></button>
+              <button onClick={() => setIsStudentModalOpen(false)} className="hover:bg-white/20 p-2 md:p-3 rounded-full transition-all"><X size={24} /></button>
             </div>
-            <form onSubmit={handleSaveStudent} className="p-12 space-y-8 bg-white">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+            <form onSubmit={handleSaveStudent} className="p-6 md:p-10 space-y-6 md:space-y-8 bg-white">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
                 {/* Section 1: Identity */}
                 <div className="space-y-3">
                   <label className="block text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-2">1. Cargo (Rol)</label>
@@ -3096,14 +4016,13 @@ const App = () => {
       )}
 
       {panelModalType === 'schedule' && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-6 bg-slate-950/70 backdrop-blur-xl animate-fade-in">
-          <div className="bg-white rounded-[4rem] shadow-2xl w-full max-w-5xl overflow-hidden animate-slide-up border border-white/20">
-            <div className="p-10 border-b border-slate-100 flex justify-between items-center bg-indigo-700 text-white">
-              <h2 className="text-2xl font-black uppercase tracking-widest">Nuevo Horario Académico</h2>
-              <button onClick={() => setPanelModalType(null)} className="hover:bg-white/20 p-3 rounded-full transition-all"><X size={24} /></button>
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 md:p-6 bg-slate-950/70 backdrop-blur-xl animate-fade-in">
+          <div className="bg-white rounded-[2.5rem] md:rounded-[4rem] shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto animate-slide-up border border-white/20">
+            <div className="p-6 md:p-8 border-b border-slate-100 flex justify-between items-center bg-indigo-700 text-white sticky top-0 z-10">
+              <h2 className="text-lg md:text-xl font-black uppercase tracking-widest">Nuevo Horario</h2>
+              <button onClick={() => setPanelModalType(null)} className="hover:bg-white/20 p-2 rounded-full transition-all"><X size={20} /></button>
             </div>
-            <div className="p-10 grid grid-cols-1 lg:grid-cols-3 gap-10">
-              {/* Form Side */}
+            <div className="p-6 md:p-8">
               <form onSubmit={(e: any) => {
                 e.preventDefault();
                 const type = e.target.type.value;
@@ -3115,17 +4034,17 @@ const App = () => {
                   setSchedules([...schedules, { id: Date.now().toString(), targetId: 'global', type, dia, inicio, fin, materia }]);
                   setPanelModalType(null);
                 }
-              }} className="lg:col-span-1 space-y-6">
+              }} className="space-y-6">
                 <div className="space-y-2">
                   <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Tipo de Horario</label>
-                  <select name="type" className="w-full p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-indigo-500 font-black text-lg outline-none appearance-none">
+                  <select name="type" className="w-full p-4 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-indigo-500 font-black text-base outline-none appearance-none">
                     <option value="clase">Clase Académica</option>
                     <option value="laboral">Jornada Laboral</option>
                   </select>
                 </div>
                 <div className="space-y-2">
                   <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Día de la Semana</label>
-                  <select name="dia" className="w-full p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-indigo-500 font-black text-lg outline-none appearance-none">
+                  <select name="dia" className="w-full p-4 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-indigo-500 font-black text-base outline-none appearance-none">
                     {['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'].map(d => (
                       <option key={d} value={d}>{d}</option>
                     ))}
@@ -3134,59 +4053,19 @@ const App = () => {
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Inicio</label>
-                    <input name="inicio" type="time" required className="w-full p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-indigo-500 font-black text-lg outline-none" />
+                    <input name="inicio" type="time" required className="w-full p-4 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-indigo-500 font-black text-base outline-none" />
                   </div>
                   <div className="space-y-2">
                     <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Fin</label>
-                    <input name="fin" type="time" required className="w-full p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-indigo-500 font-black text-lg outline-none" />
+                    <input name="fin" type="time" required className="w-full p-4 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-indigo-500 font-black text-base outline-none" />
                   </div>
                 </div>
                 <div className="space-y-2">
                   <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Materia / Actividad</label>
-                  <input name="materia" placeholder="Ej. Matemáticas" className="w-full p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-indigo-500 font-black text-lg outline-none" />
+                  <input name="materia" placeholder="Ej. Matemáticas" className="w-full p-4 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-indigo-500 font-black text-base outline-none" />
                 </div>
-                <button type="submit" className="w-full py-5 bg-indigo-600 text-white rounded-2xl font-black uppercase tracking-widest text-xs shadow-xl hover:bg-indigo-700 transition-all">Registrar en Horario</button>
+                <button type="submit" className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-black uppercase tracking-widest text-xs shadow-xl hover:bg-indigo-700 transition-all">Registrar en Horario</button>
               </form>
-
-              {/* Visual Grid Side (Cuadro de Horario) */}
-              <div className="lg:col-span-2 bg-slate-50 rounded-[3rem] p-8 border border-slate-100 overflow-hidden flex flex-col">
-                <h3 className="text-lg font-black text-slate-800 uppercase tracking-tighter mb-6 flex items-center gap-3">
-                  <Calendar className="text-indigo-600" /> Vista Semanal de Horarios
-                </h3>
-                <div className="flex-1 overflow-auto">
-                  <div className="min-w-[600px]">
-                    <div className="grid grid-cols-8 gap-2 mb-4">
-                      <div className="h-10"></div>
-                      {['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'].map(d => (
-                        <div key={d} className="h-10 flex items-center justify-center bg-white rounded-xl border border-slate-200 text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                          {d}
-                        </div>
-                      ))}
-                    </div>
-                    {/* Simplified grid view */}
-                    <div className="space-y-2">
-                      {['07:00', '08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00'].map(time => (
-                        <div key={time} className="grid grid-cols-8 gap-2">
-                          <div className="h-12 flex items-center justify-end pr-3 text-[10px] font-bold text-slate-400">{time}</div>
-                          {[1, 2, 3, 4, 5, 6, 7].map(dayIndex => {
-                            const dayName = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'][dayIndex - 1];
-                            const schAtTime = schedules.find(s => s.dia === dayName && s.inicio.startsWith(time.split(':')[0]));
-                            return (
-                              <div key={dayIndex} className={`h-12 rounded-xl border border-dashed flex items-center justify-center p-1 overflow-hidden ${schAtTime ? 'bg-indigo-600 border-indigo-600 text-white shadow-lg' : 'bg-white border-slate-200'}`}>
-                                {schAtTime && (
-                                  <div className="text-[8px] font-black uppercase leading-tight text-center truncate">
-                                    {schAtTime.materia || schAtTime.type}
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              </div>
             </div>
           </div>
         </div>
@@ -3270,124 +4149,43 @@ const App = () => {
         </div>
       )}
 
-      {panelModalType === 'siteConfig' && (
-        <div className="fixed inset-0 z-[110] flex items-center justify-center p-6 bg-slate-950/80 backdrop-blur-xl animate-fade-in">
-          <div className="bg-white rounded-[4rem] shadow-2xl w-full max-w-2xl overflow-hidden animate-slide-up border-8 border-white">
-            <div className="p-10 text-white flex justify-between items-center" style={{ backgroundColor: configTargetUser ? (configTargetUser.config?.theme.primaryColor || globalConfig.theme.primaryColor) : globalConfig.theme.primaryColor }}>
-              <div className="flex items-center gap-4">
-                <div className="p-3 bg-white/10 rounded-2xl border border-white/10"><Palette size={24} /></div>
-                <div>
-                  <h2 className="text-2xl font-black uppercase tracking-widest">{configTargetUser ? 'Personalizar Usuario' : 'Personalizar Sitio'}</h2>
-                  <p className="text-white/60 text-[10px] font-bold uppercase mt-1">{configTargetUser ? (configTargetUser.fullName || configTargetUser.username) : 'Configuración Global'}</p>
-                </div>
-              </div>
-              <button onClick={() => { setPanelModalType(null); setConfigTargetUser(null); }} className="hover:bg-white/20 p-3 rounded-full transition-all"><X size={24} /></button>
-            </div>
-            
-            <div className="p-10 space-y-8 max-h-[70vh] overflow-y-auto custom-scrollbar">
-              {/* Site Name and Slogan */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="space-y-2">
-                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Nombre</label>
-                  <input 
-                    type="text"
-                    value={configTargetUser ? (configTargetUser.config?.siteName || globalConfig.siteName) : globalConfig.siteName}
-                    onChange={(e) => {
-                      if(configTargetUser) {
-                        const updatedUsers = users.map(u => {
-                          if(u.id === configTargetUser.id) {
-                            const updated = { ...u, config: { ...(u.config || globalConfig), siteName: e.target.value } };
-                            if(currentUser?.id === u.id) setCurrentUser(updated);
-                            return updated;
-                          }
-                          return u;
-                        });
-                        setUsers(updatedUsers);
-                        setConfigTargetUser(updatedUsers.find(u => u.id === configTargetUser.id) || null);
-                      } else {
-                        setGlobalConfig({ ...globalConfig, siteName: e.target.value });
-                      }
-                    }}
-                    className="w-full p-4 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-lg outline-none transition-all" 
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Slogan</label>
-                  <input 
-                    type="text"
-                    value={configTargetUser ? (configTargetUser.config?.slogan || globalConfig.slogan) : globalConfig.slogan}
-                    onChange={(e) => {
-                      if(configTargetUser) {
-                        const updatedUsers = users.map(u => {
-                          if(u.id === configTargetUser.id) {
-                            const updated = { ...u, config: { ...(u.config || globalConfig), slogan: e.target.value } };
-                            if(currentUser?.id === u.id) setCurrentUser(updated);
-                            return updated;
-                          }
-                          return u;
-                        });
-                        setUsers(updatedUsers);
-                        setConfigTargetUser(updatedUsers.find(u => u.id === configTargetUser.id) || null);
-                      } else {
-                        setGlobalConfig({ ...globalConfig, slogan: e.target.value });
-                      }
-                    }}
-                    className="w-full p-4 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-lg outline-none transition-all" 
-                  />
-                </div>
-              </div>
-
-              {/* Logo Section */}
-              <div className="space-y-4">
-                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Logo Institucional</label>
-                <div className="flex items-center gap-8">
-                  <div className="w-24 h-24 bg-slate-50 rounded-[2rem] border-4 border-dashed border-slate-200 flex items-center justify-center overflow-hidden">
-                    {(configTargetUser ? (configTargetUser.config?.logo || globalConfig.logo) : globalConfig.logo) ? (
-                      <img src={configTargetUser ? (configTargetUser.config?.logo || globalConfig.logo) : globalConfig.logo} className="w-full h-full object-contain p-2" />
-                    ) : (
-                      <Upload className="text-slate-300" />
-                    )}
+      {panelModalType === 'siteConfig' && (() => {
+        const rawTargetConfig = configTargetUser ? (configTargetUser.config || globalConfig) : globalConfig;
+        const targetConfig = {
+          ...globalConfig,
+          ...rawTargetConfig,
+          theme: {
+            ...globalConfig.theme,
+            ...(rawTargetConfig.theme || {})
+          }
+        };
+        return (
+          <div className="fixed inset-0 z-[110] flex items-center justify-center p-6 bg-slate-950/80 backdrop-blur-xl animate-fade-in">
+            <div className="bg-white rounded-[4rem] shadow-2xl w-full max-w-2xl overflow-hidden animate-slide-up border-8 border-white">
+              <div className="p-10 text-white flex justify-between items-center" style={{ backgroundColor: targetConfig.theme.primaryColor }}>
+                <div className="flex items-center gap-4">
+                  <div className="p-3 bg-white/10 rounded-2xl border border-white/10"><Palette size={24} /></div>
+                  <div>
+                    <h2 className="text-2xl font-black uppercase tracking-widest">{configTargetUser ? 'Personalizar Usuario' : 'Personalizar Sitio'}</h2>
+                    <p className="text-white/60 text-[10px] font-bold uppercase mt-1">{configTargetUser ? (configTargetUser.fullName || configTargetUser.username) : 'Configuración Global'}</p>
                   </div>
-                  <div className="flex flex-col gap-2">
-                    <button 
-                      onClick={() => {
-                        const input = document.createElement('input');
-                        input.type = 'file';
-                        input.accept = 'image/*';
-                        input.onchange = (e: any) => {
-                          const file = e.target.files[0];
-                          const reader = new FileReader();
-                          reader.onload = (ev) => {
-                            if(configTargetUser) {
-                              const updatedUsers = users.map(u => {
-                                if(u.id === configTargetUser.id) {
-                                  const updated = { ...u, config: { ...(u.config || globalConfig), logo: ev.target?.result as string } };
-                                  if(currentUser?.id === u.id) setCurrentUser(updated);
-                                  return updated;
-                                }
-                                return u;
-                              });
-                              setUsers(updatedUsers);
-                              setConfigTargetUser(updatedUsers.find(u => u.id === configTargetUser.id) || null);
-                            } else {
-                              setGlobalConfig({ ...globalConfig, logo: ev.target?.result as string });
-                            }
-                          };
-                          reader.readAsDataURL(file);
-                        };
-                        input.click();
-                      }}
-                      className="px-6 py-3 bg-slate-900 text-white rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-black transition-all"
-                    >
-                      Subir Logo
-                    </button>
-                    <button 
-                      onClick={() => {
+                </div>
+                <button onClick={() => { setPanelModalType(null); setConfigTargetUser(null); }} className="hover:bg-white/20 p-3 rounded-full transition-all"><X size={24} /></button>
+              </div>
+              
+              <div className="p-10 space-y-8 max-h-[70vh] overflow-y-auto custom-scrollbar">
+                {/* Site Name and Slogan */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="space-y-2">
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Nombre</label>
+                    <input 
+                      type="text"
+                      value={targetConfig.siteName}
+                      onChange={(e) => {
                         if(configTargetUser) {
                           const updatedUsers = users.map(u => {
                             if(u.id === configTargetUser.id) {
-                              const { logo, ...restConfig } = u.config || {};
-                              const updated = { ...u, config: restConfig as UserConfig };
+                              const updated = { ...u, config: { ...(u.config || globalConfig), siteName: e.target.value } };
                               if(currentUser?.id === u.id) setCurrentUser(updated);
                               return updated;
                             }
@@ -3396,149 +4194,241 @@ const App = () => {
                           setUsers(updatedUsers);
                           setConfigTargetUser(updatedUsers.find(u => u.id === configTargetUser.id) || null);
                         } else {
-                          setGlobalConfig({ ...globalConfig, logo: undefined });
+                          setGlobalConfig({ ...globalConfig, siteName: e.target.value });
                         }
                       }}
-                      className="px-6 py-3 border-2 border-slate-100 text-slate-400 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-50 transition-all"
-                    >
-                      Restablecer Default
-                    </button>
+                      className="w-full p-4 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-lg outline-none transition-all" 
+                    />
                   </div>
-                </div>
-              </div>
-
-              {/* Themes Palette */}
-              <div className="space-y-4">
-                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Temas Predeterminados</label>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                  {PREDEFINED_THEMES.map((theme) => (
-                    <button
-                      key={theme.name}
-                      onClick={() => {
+                  <div className="space-y-2">
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Slogan</label>
+                    <input 
+                      type="text"
+                      value={targetConfig.slogan || ''}
+                      onChange={(e) => {
                         if(configTargetUser) {
                           const updatedUsers = users.map(u => {
                             if(u.id === configTargetUser.id) {
-                              const updated = {
-                                ...u,
-                                config: {
-                                  ...(u.config || globalConfig),
-                                  theme: {
-                                    ...(u.config?.theme || globalConfig.theme),
-                                    primaryColor: theme.primary,
-                                    secondaryColor: theme.secondary
+                              const updated = { ...u, config: { ...(u.config || globalConfig), slogan: e.target.value } };
+                              if(currentUser?.id === u.id) setCurrentUser(updated);
+                              return updated;
+                            }
+                            return u;
+                          });
+                          setUsers(updatedUsers);
+                          setConfigTargetUser(updatedUsers.find(u => u.id === configTargetUser.id) || null);
+                        } else {
+                          setGlobalConfig({ ...globalConfig, slogan: e.target.value });
+                        }
+                      }}
+                      className="w-full p-4 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-lg outline-none transition-all" 
+                    />
+                  </div>
+                </div>
+
+                {/* Logo Section */}
+                <div className="space-y-4">
+                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Logo Institucional</label>
+                  <div className="flex items-center gap-8">
+                    <div className="w-24 h-24 bg-slate-50 rounded-[2rem] border-4 border-dashed border-slate-200 flex items-center justify-center overflow-hidden">
+                      {targetConfig.logo ? (
+                        <img src={targetConfig.logo} className="w-full h-full object-contain p-2" />
+                      ) : (
+                        <Upload className="text-slate-300" />
+                      )}
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      <button 
+                        onClick={() => {
+                          const input = document.createElement('input');
+                          input.type = 'file';
+                          input.accept = 'image/*';
+                          input.onchange = (e: any) => {
+                            const file = e.target.files[0];
+                            const reader = new FileReader();
+                            reader.onload = (ev) => {
+                              if(configTargetUser) {
+                                const updatedUsers = users.map(u => {
+                                  if(u.id === configTargetUser.id) {
+                                    const updated = { ...u, config: { ...(u.config || globalConfig), logo: ev.target?.result as string } };
+                                    if(currentUser?.id === u.id) setCurrentUser(updated);
+                                    return updated;
                                   }
-                                }
-                              };
-                              if(currentUser?.id === u.id) setCurrentUser(updated);
-                              return updated;
-                            }
-                            return u;
-                          });
-                          setUsers(updatedUsers);
-                          setConfigTargetUser(updatedUsers.find(u => u.id === configTargetUser.id) || null);
-                        } else {
-                          setGlobalConfig({
-                            ...globalConfig,
-                            theme: { ...globalConfig.theme, primaryColor: theme.primary, secondaryColor: theme.secondary }
-                          });
-                        }
-                      }}
-                      className="p-3 rounded-2xl border-2 border-slate-100 hover:border-blue-500 transition-all text-left"
-                    >
-                      <div className="flex gap-1 mb-2">
-                        <div className="w-full h-3 rounded-full" style={{ backgroundColor: theme.primary }}></div>
-                        <div className="w-full h-3 rounded-full" style={{ backgroundColor: theme.secondary }}></div>
-                      </div>
-                      <p className="text-[8px] font-black text-slate-500 uppercase truncate">{theme.name}</p>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Custom Colors */}
-              <div className="grid grid-cols-2 gap-6">
-                <div className="space-y-2">
-                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Color Primario</label>
-                  <div className="flex items-center gap-3 p-2 bg-slate-50 rounded-2xl border-2 border-slate-100">
-                    <input 
-                      type="color" 
-                      value={configTargetUser ? (configTargetUser.config?.theme.primaryColor || globalConfig.theme.primaryColor) : globalConfig.theme.primaryColor} 
-                      onChange={(e) => {
-                        if(configTargetUser) {
-                          const updatedUsers = users.map(u => {
-                            if(u.id === configTargetUser.id) {
-                              const updated = {
-                                ...u,
-                                config: {
-                                  ...(u.config || globalConfig),
-                                  theme: { ...(u.config?.theme || globalConfig.theme), primaryColor: e.target.value }
-                                }
-                              };
-                              if(currentUser?.id === u.id) setCurrentUser(updated);
-                              return updated;
-                            }
-                            return u;
-                          });
-                          setUsers(updatedUsers);
-                          setConfigTargetUser(updatedUsers.find(u => u.id === configTargetUser.id) || null);
-                        } else {
-                          setGlobalConfig({ ...globalConfig, theme: { ...globalConfig.theme, primaryColor: e.target.value } });
-                        }
-                      }}
-                      className="w-10 h-10 rounded-xl cursor-pointer border-none bg-transparent"
-                    />
-                    <span className="font-mono font-bold text-[10px] text-slate-500 uppercase">{configTargetUser ? (configTargetUser.config?.theme.primaryColor || globalConfig.theme.primaryColor) : globalConfig.theme.primaryColor}</span>
+                                  return u;
+                                });
+                                setUsers(updatedUsers);
+                                setConfigTargetUser(updatedUsers.find(u => u.id === configTargetUser.id) || null);
+                              } else {
+                                setGlobalConfig({ ...globalConfig, logo: ev.target?.result as string });
+                              }
+                            };
+                            reader.readAsDataURL(file);
+                          };
+                          input.click();
+                        }}
+                        className="px-6 py-3 bg-slate-900 text-white rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-black transition-all"
+                      >
+                        Subir Logo
+                      </button>
+                      <button 
+                        onClick={() => {
+                          if(configTargetUser) {
+                            const updatedUsers = users.map(u => {
+                              if(u.id === configTargetUser.id) {
+                                const { logo, ...restConfig } = u.config || {};
+                                const updated = { ...u, config: restConfig as UserConfig };
+                                if(currentUser?.id === u.id) setCurrentUser(updated);
+                                return updated;
+                              }
+                              return u;
+                            });
+                            setUsers(updatedUsers);
+                            setConfigTargetUser(updatedUsers.find(u => u.id === configTargetUser.id) || null);
+                          } else {
+                            setGlobalConfig({ ...globalConfig, logo: undefined });
+                          }
+                        }}
+                        className="px-6 py-3 border-2 border-slate-100 text-slate-400 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-50 transition-all"
+                      >
+                        Restablecer Default
+                      </button>
+                    </div>
                   </div>
                 </div>
-                <div className="space-y-2">
-                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Color Secundario</label>
-                  <div className="flex items-center gap-3 p-2 bg-slate-50 rounded-2xl border-2 border-slate-100">
-                    <input 
-                      type="color" 
-                      value={configTargetUser ? (configTargetUser.config?.theme.secondaryColor || globalConfig.theme.secondaryColor) : globalConfig.theme.secondaryColor} 
-                      onChange={(e) => {
-                        if(configTargetUser) {
-                          const updatedUsers = users.map(u => {
-                            if(u.id === configTargetUser.id) {
-                              const updated = {
-                                ...u,
-                                config: {
-                                  ...(u.config || globalConfig),
-                                  theme: { ...(u.config?.theme || globalConfig.theme), secondaryColor: e.target.value }
-                                }
-                              };
-                              if(currentUser?.id === u.id) setCurrentUser(updated);
-                              return updated;
-                            }
-                            return u;
-                          });
-                          setUsers(updatedUsers);
-                          setConfigTargetUser(updatedUsers.find(u => u.id === configTargetUser.id) || null);
-                        } else {
-                          setGlobalConfig({ ...globalConfig, theme: { ...globalConfig.theme, secondaryColor: e.target.value } });
-                        }
-                      }}
-                      className="w-10 h-10 rounded-xl cursor-pointer border-none bg-transparent"
-                    />
-                    <span className="font-mono font-bold text-[10px] text-slate-500 uppercase">{configTargetUser ? (configTargetUser.config?.theme.secondaryColor || globalConfig.theme.secondaryColor) : globalConfig.theme.secondaryColor}</span>
+
+                {/* Themes Palette */}
+                <div className="space-y-4">
+                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Temas Predeterminados</label>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    {PREDEFINED_THEMES.map((theme) => (
+                      <button
+                        key={theme.name}
+                        onClick={() => {
+                          if(configTargetUser) {
+                            const updatedUsers = users.map(u => {
+                              if(u.id === configTargetUser.id) {
+                                const updated = {
+                                  ...u,
+                                  config: {
+                                    ...(u.config || globalConfig),
+                                    theme: {
+                                      ...(u.config?.theme || globalConfig.theme),
+                                      primaryColor: theme.primary,
+                                      secondaryColor: theme.secondary
+                                    }
+                                  }
+                                };
+                                if(currentUser?.id === u.id) setCurrentUser(updated);
+                                return updated;
+                              }
+                              return u;
+                            });
+                            setUsers(updatedUsers);
+                            setConfigTargetUser(updatedUsers.find(u => u.id === configTargetUser.id) || null);
+                          } else {
+                            setGlobalConfig({
+                              ...globalConfig,
+                              theme: { ...globalConfig.theme, primaryColor: theme.primary, secondaryColor: theme.secondary }
+                            });
+                          }
+                        }}
+                        className="p-3 rounded-2xl border-2 border-slate-100 hover:border-blue-500 transition-all text-left"
+                      >
+                        <div className="flex gap-1 mb-2">
+                          <div className="w-full h-3 rounded-full" style={{ backgroundColor: theme.primary }}></div>
+                          <div className="w-full h-3 rounded-full" style={{ backgroundColor: theme.secondary }}></div>
+                        </div>
+                        <p className="text-[8px] font-black text-slate-500 uppercase truncate">{theme.name}</p>
+                      </button>
+                    ))}
                   </div>
                 </div>
-              </div>
 
-              <button 
-                onClick={() => {
-                  setPanelModalType(null);
-                  setConfigTargetUser(null);
-                  setToast({ message: "Configuración guardada correctamente.", type: 'success' });
-                }}
-                className="w-full py-5 bg-slate-900 text-white rounded-2xl font-black uppercase tracking-widest text-xs shadow-xl hover:bg-black transition-all"
-              >
-                Cerrar y Aplicar
-              </button>
+                {/* Custom Colors */}
+                <div className="grid grid-cols-2 gap-6">
+                  <div className="space-y-2">
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Color Primario</label>
+                    <div className="flex items-center gap-3 p-2 bg-slate-50 rounded-2xl border-2 border-slate-100">
+                      <input 
+                        type="color" 
+                        value={targetConfig.theme.primaryColor} 
+                        onChange={(e) => {
+                          if(configTargetUser) {
+                            const updatedUsers = users.map(u => {
+                              if(u.id === configTargetUser.id) {
+                                const updated = {
+                                  ...u,
+                                  config: {
+                                    ...(u.config || globalConfig),
+                                    theme: { ...(u.config?.theme || globalConfig.theme), primaryColor: e.target.value }
+                                  }
+                                };
+                                if(currentUser?.id === u.id) setCurrentUser(updated);
+                                return updated;
+                              }
+                              return u;
+                            });
+                            setUsers(updatedUsers);
+                            setConfigTargetUser(updatedUsers.find(u => u.id === configTargetUser.id) || null);
+                          } else {
+                            setGlobalConfig({ ...globalConfig, theme: { ...globalConfig.theme, primaryColor: e.target.value } });
+                          }
+                        }}
+                        className="w-10 h-10 rounded-xl cursor-pointer border-none bg-transparent"
+                      />
+                      <span className="font-mono font-bold text-[10px] text-slate-500 uppercase">{targetConfig.theme.primaryColor}</span>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Color Secundario</label>
+                    <div className="flex items-center gap-3 p-2 bg-slate-50 rounded-2xl border-2 border-slate-100">
+                      <input 
+                        type="color" 
+                        value={targetConfig.theme.secondaryColor} 
+                        onChange={(e) => {
+                          if(configTargetUser) {
+                            const updatedUsers = users.map(u => {
+                              if(u.id === configTargetUser.id) {
+                                const updated = {
+                                  ...u,
+                                  config: {
+                                    ...(u.config || globalConfig),
+                                    theme: { ...(u.config?.theme || globalConfig.theme), secondaryColor: e.target.value }
+                                  }
+                                };
+                                if(currentUser?.id === u.id) setCurrentUser(updated);
+                                return updated;
+                              }
+                              return u;
+                            });
+                            setUsers(updatedUsers);
+                            setConfigTargetUser(updatedUsers.find(u => u.id === configTargetUser.id) || null);
+                          } else {
+                            setGlobalConfig({ ...globalConfig, theme: { ...globalConfig.theme, secondaryColor: e.target.value } });
+                          }
+                        }}
+                        className="w-10 h-10 rounded-xl cursor-pointer border-none bg-transparent"
+                      />
+                      <span className="font-mono font-bold text-[10px] text-slate-500 uppercase">{targetConfig.theme.secondaryColor}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <button 
+                  onClick={() => {
+                    setPanelModalType(null);
+                    setConfigTargetUser(null);
+                    setToast({ message: "Configuración guardada correctamente.", type: 'success' });
+                  }}
+                  className="w-full py-5 bg-slate-900 text-white rounded-2xl font-black uppercase tracking-widest text-xs shadow-xl hover:bg-black transition-all"
+                >
+                  Cerrar y Aplicar
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {editingAttendance && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center p-6 bg-slate-950/80 backdrop-blur-xl animate-fade-in">
@@ -3603,6 +4493,73 @@ const App = () => {
               <button type="submit" className="w-full py-5 bg-blue-600 text-white rounded-2xl font-black uppercase tracking-widest text-xs shadow-xl hover:bg-blue-700 transition-all">
                 Actualizar Registro
               </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {editingIncidence && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-6 bg-slate-950/80 backdrop-blur-xl animate-fade-in">
+          <div className="bg-white rounded-[4rem] shadow-2xl w-full max-w-2xl overflow-hidden animate-slide-up border border-white/20">
+            <div className="p-10 border-b border-slate-100 flex justify-between items-center bg-red-600 text-white">
+              <div>
+                <h2 className="text-2xl font-black uppercase tracking-widest">Editar Incidencia</h2>
+                <p className="text-red-100 text-[10px] font-bold uppercase mt-1">{editingIncidence.studentName}</p>
+              </div>
+              <button onClick={() => setEditingIncidence(null)} className="hover:bg-white/20 p-3 rounded-full transition-all"><X size={24} /></button>
+            </div>
+            <form onSubmit={(e: any) => {
+              e.preventDefault();
+              const formData = new FormData(e.currentTarget);
+              const updated = incidences.map(i => i.id === editingIncidence.id ? { 
+                ...i, 
+                type: formData.get('type') as string,
+                severity: formData.get('severity') as IncidenceSeverity,
+                status: formData.get('status') as IncidenceStatus,
+                description: formData.get('description') as string
+              } : i);
+              setIncidences(updated);
+              setEditingIncidence(null);
+              setToast({ message: "Incidencia actualizada.", type: 'success' });
+            }} className="p-10 space-y-6 max-h-[70vh] overflow-y-auto custom-scrollbar">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Tipo de Incidencia</label>
+                  <select name="type" defaultValue={editingIncidence.type} required className="w-full p-4 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-red-500 font-bold text-slate-700 outline-none transition-all">
+                    {incidenceTypes.map(type => (
+                      <option key={type.id} value={type.name}>{type.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Estado de Seguimiento</label>
+                  <select name="status" defaultValue={editingIncidence.status} required className="w-full p-4 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-red-500 font-bold text-slate-700 outline-none transition-all">
+                    <option value="registrada">Registrada</option>
+                    <option value="en evaluación">En Evaluación</option>
+                    <option value="en seguimiento">En Seguimiento</option>
+                    <option value="resuelta">Resuelta</option>
+                    <option value="escalada a un caso mayor">Escalada</option>
+                  </select>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Nivel de Gravedad</label>
+                <div className="flex gap-2">
+                  {['leve', 'moderado', 'grave'].map((sev) => (
+                    <label key={sev} className="flex-1">
+                      <input type="radio" name="severity" value={sev} defaultChecked={editingIncidence.severity === sev} required className="hidden peer" />
+                      <div className={`text-center p-4 rounded-2xl border-2 border-slate-100 cursor-pointer font-black text-[10px] uppercase tracking-widest transition-all peer-checked:bg-red-600 peer-checked:text-white peer-checked:border-red-600 hover:bg-slate-50`}>
+                        {sev}
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Descripción</label>
+                <textarea name="description" defaultValue={editingIncidence.description} required rows={4} className="w-full p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-red-500 font-bold text-slate-700 outline-none transition-all resize-none" />
+              </div>
+              <button type="submit" className="w-full py-5 bg-red-600 text-white rounded-2xl font-black uppercase tracking-widest text-xs shadow-xl hover:bg-red-700 transition-all">Guardar Cambios</button>
             </form>
           </div>
         </div>
