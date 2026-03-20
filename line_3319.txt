@@ -1,0 +1,1 @@
+3319:                           .filter(g => g.studentName.toLowerCase().includes(calificacionesSearch.toLowerCase()) || g.materia.toLowerCase().includes(calificacionesSearch.toLowerCase()))

@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "tsx server.ts",
     "build": "vite build",
     "preview": "vite preview",
     "lint": "tsc --noEmit"
@@ -13,7 +13,9 @@
     "@google/genai": "1.41.0",
     "@tailwindcss/vite": "^4.2.0",
     "@types/d3": "^7.4.3",
+    "@types/express": "^5.0.6",
     "d3": "^7.9.0",
+    "express": "^5.2.1",
     "html-to-image": "^1.11.13",
     "jszip": "^3.10.1",
     "lucide-react": "0.474.0",
@@ -22,10 +24,13 @@
     "react-dom": "^19.2.4",
     "recharts": "^3.7.0",
     "tailwindcss": "^4.2.0",
+    "tsx": "^4.21.0",
+    "ws": "^8.19.0",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
+    "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^5.0.0",
     "typescript": "~5.8.2",
     "vite": "^6.2.0"
