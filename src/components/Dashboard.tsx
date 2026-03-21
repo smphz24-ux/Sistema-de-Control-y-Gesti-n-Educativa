@@ -62,7 +62,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         {stats.map((stat, i) => (
           <div key={i} className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100 flex items-center gap-6 hover:shadow-xl transition-all group">
-            <div className={`w-16 h-16 rounded-2xl flex items-center justify-center group-hover:scale-110 transition-transform bg-${stat.color}-50 text-${stat.color}-600`}>
+            <div className={`w-16 h-16 rounded-2xl flex items-center justify-center group-hover:scale-110 transition-transform`} style={{ backgroundColor: `${activeConfig.theme.primaryColor}15`, color: activeConfig.theme.primaryColor }}>
               <stat.icon size={32} />
             </div>
             <div>

@@ -59,6 +59,8 @@ import * as htmlToImage from 'html-to-image';
 import QRCode from 'qrcode';
 import JSZip from 'jszip';
 import * as XLSX from 'xlsx';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 import { 
   AppUser, UserConfig, Student, ConsultationLog, AttendanceStatus, 
@@ -103,9 +105,17 @@ const App = () => {
   const [activeReportSubTab, setActiveReportSubTab] = useState<'global' | 'personalizado'>('global');
   const [activeAlertaSubTab, setActiveAlertaSubTab] = useState<'registro' | 'historial'>('registro');
   const [activePanelSubTab, setActivePanelSubTab] = useState<'perfil' | 'grados' | 'horarios' | 'alerta' | 'profesores'>('perfil');
-  const [activeGradosSubTab, setActiveGradosSubTab] = useState<'niveles' | 'grados'>('niveles');
+  const [activeGradosSubTab, setActiveGradosSubTab] = useState<'niveles' | 'grados' | 'secciones'>('niveles');
   const [activeHorariosSubTab, setActiveHorariosSubTab] = useState<'turnos' | 'config' | 'creador' | 'materias'>('turnos');
-  const [panelModalType, setPanelModalType] = useState<'level' | 'grade' | 'shift' | 'schedule' | 'profile' | 'report' | 'siteConfig' | null>(null);
+  const [panelModalType, setPanelModalType] = useState<'level' | 'grade' | 'shift' | 'schedule' | 'profile' | 'report' | 'siteConfig' | 'section' | null>(null);
+  const [editingSection, setEditingSection] = useState<string | null>(null);
+  const [editingLevel, setEditingLevel] = useState<Level | null>(null);
+  const [editingGradeLevel, setEditingGradeLevel] = useState<GradeLevel | null>(null);
+  const [confirmModal, setConfirmModal] = useState<{
+    title: string;
+    message: string;
+    onConfirm: () => void;
+  } | null>(null);
   
   // New States for Grades and Schedules
   const [courses, setCourses] = useState<{id: string, name: string, color: string, teacherId?: string, grades?: string[]}[]>([
@@ -133,6 +143,8 @@ const App = () => {
   const [calificacionesLevelFilter, setCalificacionesLevelFilter] = useState("");
   const [calificacionesSectionFilter, setCalificacionesSectionFilter] = useState("");
   const [calificacionesSearch, setCalificacionesSearch] = useState("");
+  const [calificacionesMateriaFilter, setCalificacionesMateriaFilter] = useState("");
+  const [calificacionesDateFilter, setCalificacionesDateFilter] = useState("");
   const [boletasSortOrder, setBoletasSortOrder] = useState<'merito' | 'demerito'>('merito');
   const [selectedBoletaStudent, setSelectedBoletaStudent] = useState<Student | null>(null);
 
@@ -162,6 +174,9 @@ const App = () => {
     { id: '3', nombre: 'Secundaria' }
   ]);
   const [gradeLevels, setGradeLevels] = useState<GradeLevel[]>([]);
+  const [sections, setSections] = useState<string[]>(['A', 'B', 'C', 'D', 'E']);
+  const [schoolDays, setSchoolDays] = useState<string[]>(['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes']);
+  const [scheduleGradeFilter, setScheduleGradeFilter] = useState<string>('');
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [incidences, setIncidences] = useState<Incidence[]>([]);
@@ -332,6 +347,31 @@ const App = () => {
         setGradeLevels(data.gradeLevels || []);
         setSchedules(data.schedules || []);
         setShifts(data.shifts || []);
+        setSections(data.sections || ['A', 'B', 'C', 'D', 'E']);
+        setLevels(data.levels || [
+          { id: '1', nombre: 'Inicial' },
+          { id: '2', nombre: 'Primaria' },
+          { id: '3', nombre: 'Secundaria' }
+        ]);
+        setGradeTypes(data.gradeTypes || [
+          {id: '1', name: 'Tarea'},
+          {id: '2', name: 'Examen'},
+          {id: '3', name: 'Medición'},
+          {id: '4', name: 'Participación'}
+        ]);
+        setTimeSlots(data.timeSlots || Array.from({ length: 10 }).map((_, i) => ({
+          id: i.toString(),
+          start: `${(7 + i).toString().padStart(2, '0')}:00`,
+          end: `${(8 + i).toString().padStart(2, '0')}:00`
+        })));
+        setSchoolDays(data.schoolDays || ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes']);
+        setIncidencesTypes(data.incidenceTypes || [
+          { id: '1', name: 'Acumulación de tardanzas' },
+          { id: '2', name: 'Incumplimiento de tareas' },
+          { id: '3', name: 'Faltas repetidas' },
+          { id: '4', name: 'Celular en clases' },
+          { id: '5', name: 'Conducta inapropiada en la institución' }
+        ]);
         setConsultationLogs(data.consultationLogs || []);
         setConductActions(data.conductActions || []);
       }
@@ -353,6 +393,12 @@ const App = () => {
         gradeLevels,
         schedules,
         shifts,
+        sections,
+        levels,
+        gradeTypes,
+        timeSlots,
+        schoolDays,
+        incidenceTypes,
         consultationLogs,
         conductActions
       };
@@ -562,15 +608,22 @@ const App = () => {
         if (message.type === 'update' && message.data) {
           const data = message.data;
           isRemoteUpdate.current = true;
-          setStudents(data.students || []);
-          setAttendance(data.attendance || []);
-          setGrades(data.grades || []);
-          setIncidences(data.incidences || []);
-          setCourses(data.courses || courses);
-          setGradeLevels(data.gradeLevels || []);
-          setSchedules(data.schedules || []);
-          setShifts(data.shifts || []);
-          setConsultationLogs(data.consultationLogs || []);
+          if (data.students) setStudents(data.students);
+          if (data.attendance) setAttendance(data.attendance);
+          if (data.grades) setGrades(data.grades);
+          if (data.incidences) setIncidences(data.incidences);
+          if (data.courses) setCourses(data.courses);
+          if (data.gradeLevels) setGradeLevels(data.gradeLevels);
+          if (data.sections) setSections(data.sections);
+          if (data.levels) setLevels(data.levels);
+          if (data.gradeTypes) setGradeTypes(data.gradeTypes);
+          if (data.timeSlots) setTimeSlots(data.timeSlots);
+          if (data.schoolDays) setSchoolDays(data.schoolDays);
+          if (data.incidenceTypes) setIncidencesTypes(data.incidenceTypes);
+          if (data.schedules) setSchedules(data.schedules);
+          if (data.shifts) setShifts(data.shifts);
+          if (data.consultationLogs) setConsultationLogs(data.consultationLogs);
+          if (data.conductActions) setConductActions(data.conductActions);
           setTimeout(() => { isRemoteUpdate.current = false; }, 100);
         } else if (message.type === 'config_update' && message.data) {
           setGlobalConfig(message.data);
@@ -602,7 +655,7 @@ const App = () => {
       }, 1000);
       return () => clearTimeout(timer);
     }
-  }, [students, attendance, grades, incidences, courses, gradeLevels, schedules, shifts]);
+  }, [students, attendance, grades, incidences, courses, gradeLevels, schedules, shifts, sections, levels, consultationLogs, conductActions, gradeTypes, timeSlots, schoolDays, incidenceTypes]);
 
   useEffect(() => {
     if (users.length > 0 && !isRemoteUpdate.current) {
@@ -893,15 +946,16 @@ const App = () => {
     let permissions: string[] = [];
     if (isMainAdmin) {
       permissions = ['dashboard', 'estudiantes', 'asistencia', 'reportes', 'alerta', 'calificaciones', 'mi-panel', 'config'];
+      // Grant all sub-permissions too
+      permissions.push('mi-panel:perfil', 'mi-panel:grados', 'mi-panel:horarios', 'mi-panel:alerta');
     } else {
       // Get selected permissions from form
       const selectedPerms = formData.getAll('permissions') as string[];
       permissions = selectedPerms.length > 0 ? selectedPerms : (editingUser?.permissions || ['mi-panel']);
       
-      // Ensure at least one permission
-      if (permissions.length === 0) {
-        setToast({ message: "Debe seleccionar al menos un permiso", type: 'error' });
-        return;
+      // If mi-panel is selected but no sub-perms, add default ones
+      if (permissions.includes('mi-panel') && !permissions.some(p => p.startsWith('mi-panel:'))) {
+        permissions.push('mi-panel:perfil');
       }
     }
 
@@ -1254,6 +1308,116 @@ const App = () => {
     salidas: todayAttendance.filter(a => a.estado === 'salida').length,
   };
 
+  const exportIncidencesToExcel = () => {
+    const filteredIncidences = incidences.filter(inc => 
+      inc.studentName.toLowerCase().includes(reportSearchTerm.toLowerCase()) ||
+      inc.studentDni.includes(reportSearchTerm) ||
+      inc.type.toLowerCase().includes(reportSearchTerm.toLowerCase())
+    );
+
+    const data = filteredIncidences.map(inc => ({
+      'Estudiante': inc.studentName,
+      'DNI': inc.studentDni,
+      'Grado': inc.studentGrade,
+      'Tipo': inc.type,
+      'Fecha': inc.date,
+      'Gravedad': inc.severity.toUpperCase(),
+      'Estado': inc.status.toUpperCase(),
+      'Descripción': inc.description
+    }));
+
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Historial Incidencias");
+    XLSX.writeFile(wb, `Historial_Incidencias_${new Date().toLocaleDateString()}.xlsx`);
+    setToast({ message: "Excel descargado", type: 'success' });
+  };
+
+  const exportIncidencesToPDF = () => {
+    const doc = new jsPDF();
+    const filteredIncidences = incidences.filter(inc => 
+      inc.studentName.toLowerCase().includes(reportSearchTerm.toLowerCase()) ||
+      inc.studentDni.includes(reportSearchTerm) ||
+      inc.type.toLowerCase().includes(reportSearchTerm.toLowerCase())
+    );
+
+    doc.setFontSize(18);
+    doc.text(activeConfig.siteName.toUpperCase(), 14, 15);
+    doc.setFontSize(14);
+    doc.text("Historial de Incidencias", 14, 25);
+    doc.setFontSize(10);
+    doc.text(`Fecha de generación: ${new Date().toLocaleString()}`, 14, 32);
+
+    const tableData = filteredIncidences.map(inc => [
+      inc.studentName,
+      inc.studentGrade,
+      inc.type,
+      inc.date,
+      inc.severity.toUpperCase(),
+      inc.status.toUpperCase()
+    ]);
+
+    autoTable(doc, {
+      startY: 40,
+      head: [['Estudiante', 'Grado', 'Tipo', 'Fecha', 'Gravedad', 'Estado']],
+      body: tableData,
+      theme: 'grid',
+      headStyles: { fillColor: activeConfig.theme.primaryColor || '#1e3a8a' }
+    });
+
+    doc.save(`Historial_Incidencias_${new Date().toLocaleDateString()}.pdf`);
+    setToast({ message: "PDF descargado", type: 'success' });
+  };
+
+  const exportGradesToExcel = (filteredGrades: any[]) => {
+    const data = filteredGrades.map(g => {
+      const student = students.find(s => s.id === g.studentId);
+      return {
+        'Alumno': g.studentName,
+        'DNI': student?.dni || "",
+        'Grado': student?.grado || "",
+        'Sección': student?.seccion || "",
+        'Materia': g.materia,
+        'Nota': g.nota,
+        'Fecha': g.fecha
+      };
+    });
+
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Registros de Notas");
+    XLSX.writeFile(wb, `Registros_Notas_${new Date().toLocaleDateString()}.xlsx`);
+    setToast({ message: "Excel descargado", type: 'success' });
+  };
+
+  const exportGradesToPDF = (filteredGrades: any[]) => {
+    const doc = new jsPDF();
+    doc.setFontSize(18);
+    doc.text(activeConfig.siteName.toUpperCase(), 14, 15);
+    doc.setFontSize(14);
+    doc.text("Registros de Calificaciones", 14, 25);
+    doc.setFontSize(10);
+    doc.text(`Fecha de generación: ${new Date().toLocaleString()}`, 14, 32);
+
+    const tableData = filteredGrades.map(g => [
+      g.studentName,
+      g.materia,
+      g.nota.toString().padStart(2, '0'),
+      g.fecha
+    ]);
+
+    autoTable(doc, {
+      startY: 40,
+      head: [['Alumno', 'Materia / Tipo', 'Nota', 'Fecha']],
+      body: tableData,
+      theme: 'grid',
+      headStyles: { fillColor: activeConfig.theme.primaryColor || '#1e3a8a' }
+    });
+
+    doc.save(`Registros_Notas_${new Date().toLocaleDateString()}.pdf`);
+    setToast({ message: "PDF descargado", type: 'success' });
+  };
+
   const handleLogin = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
@@ -1280,9 +1444,26 @@ const App = () => {
       }
       setIsAuthenticated(true);
       setShowLanding(false);
-      if (user.permissions.length > 0) {
-        setActiveTab(user.permissions[0] as any);
+      
+      // Set active tab to first available permission
+      const firstTab = user.permissions.find(p => !p.includes(':'));
+      if (firstTab) {
+        setActiveTab(firstTab as any);
+        // If the first tab is mi-panel, set the subtab to the first available sub-permission
+        if (firstTab === 'mi-panel') {
+          const firstSubTab = user.permissions.find(p => p.startsWith('mi-panel:'));
+          if (firstSubTab) {
+            setActivePanelSubTab(firstSubTab.split(':')[1] as any);
+          }
+        }
+      } else if (user.permissions.length > 0) {
+        const mainTab = user.permissions[0].split(':')[0];
+        setActiveTab(mainTab as any);
+        if (mainTab === 'mi-panel') {
+          setActivePanelSubTab(user.permissions[0].split(':')[1] as any);
+        }
       }
+
       setToast({ message: `Bienvenido, ${user.fullName || user.username}`, type: 'success' });
     } else {
       setToast({ message: "Usuario o contraseña incorrectos", type: 'error' });
@@ -1607,6 +1788,19 @@ const App = () => {
     if (currentUser?.permissions.includes(item.id)) return true;
     return currentUser?.permissions.some(p => p.startsWith(`${item.id}:`));
   });
+
+  // Ensure activePanelSubTab is valid for current user permissions
+  useEffect(() => {
+    if (activeTab === 'mi-panel' && currentUser?.role !== 'admin') {
+      const hasCurrentSubTab = currentUser?.permissions.includes(`mi-panel:${activePanelSubTab}`);
+      if (!hasCurrentSubTab) {
+        const firstAvailable = currentUser?.permissions.find(p => p.startsWith('mi-panel:'));
+        if (firstAvailable) {
+          setActivePanelSubTab(firstAvailable.split(':')[1] as any);
+        }
+      }
+    }
+  }, [activeTab, currentUser, activePanelSubTab]);
 
   return (
     <>
@@ -2545,15 +2739,31 @@ const App = () => {
                           <h4 className="text-2xl font-black text-slate-800">{incidences.length}</h4>
                         </div>
                       </div>
-                      <div className="relative w-full md:w-96">
-                        <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                        <input 
-                          type="text" 
-                          placeholder="Buscar en historial..." 
-                          className="w-full pl-12 pr-4 py-3 rounded-xl bg-slate-50 border-none focus:ring-2 focus:ring-red-500 font-bold text-sm"
-                          value={reportSearchTerm}
-                          onChange={(e) => setReportSearchTerm(e.target.value)}
-                        />
+                      <div className="flex flex-col md:flex-row items-center gap-4 w-full md:w-auto">
+                        <div className="relative w-full md:w-64">
+                          <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                          <input 
+                            type="text" 
+                            placeholder="Buscar alumno..." 
+                            className="w-full pl-12 pr-4 py-3 rounded-xl bg-slate-50 border-none focus:ring-2 focus:ring-red-500 font-bold text-sm"
+                            value={reportSearchTerm}
+                            onChange={(e) => setReportSearchTerm(e.target.value)}
+                          />
+                        </div>
+                        <div className="flex gap-2 w-full md:w-auto">
+                          <button 
+                            onClick={exportIncidencesToExcel}
+                            className="flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-3 bg-emerald-600 text-white rounded-xl font-black text-[10px] uppercase tracking-widest hover:scale-105 transition-all shadow-lg"
+                          >
+                            <FileSpreadsheet size={16} /> Excel
+                          </button>
+                          <button 
+                            onClick={exportIncidencesToPDF}
+                            className="flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-3 bg-rose-600 text-white rounded-xl font-black text-[10px] uppercase tracking-widest hover:scale-105 transition-all shadow-lg"
+                          >
+                            <FileText size={16} /> PDF
+                          </button>
+                        </div>
                       </div>
                     </div>
 
@@ -2634,9 +2844,8 @@ const App = () => {
                                   </button>
                                   <button 
                                     onClick={() => {
-                                      if(confirm('¿Está seguro de eliminar este registro?')) {
-                                        setIncidences(incidences.filter(i => i.id !== inc.id));
-                                      }
+                                      setIncidences(incidences.filter(i => i.id !== inc.id));
+                                      setToast({ message: "Registro eliminado", type: 'success' });
                                     }}
                                     className="p-2 bg-red-50 text-red-600 rounded-xl hover:bg-red-600 hover:text-white transition-all"
                                   >
@@ -2842,51 +3051,143 @@ const App = () => {
              </div>
            )}
 
-               {activeCalificacionesSubTab === 'registros' && (
-                 <div className="bg-white rounded-[2rem] md:rounded-[3rem] p-6 md:p-10 shadow-2xl border-t-4 border-t-blue-600 max-w-6xl mx-auto">
-                   <div className="flex flex-col md:flex-row justify-between items-center gap-6 mb-10">
-                     <div>
-                       <h3 className="text-2xl font-black text-slate-800 uppercase tracking-tight">Registros de Calificaciones</h3>
-                       <p className="text-slate-500 mt-1">Historial completo de notas registradas en el sistema.</p>
-                     </div>
-                     <div className="flex gap-2">
-                       <div className="relative">
-                         <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-                         <input 
-                           type="text" 
-                           placeholder="Buscar registro..." 
-                           value={calificacionesSearch}
-                           onChange={(e) => setCalificacionesSearch(e.target.value)}
-                           className="pl-12 pr-4 py-3 rounded-xl bg-slate-50 border-none font-bold text-slate-800 text-sm shadow-inner outline-none focus:ring-2 focus:ring-blue-500 w-64"
-                         />
+               {activeCalificacionesSubTab === 'registros' && (() => {
+                 const filteredGrades = grades.filter(g => {
+                   const student = students.find(s => s.id === g.studentId);
+                   const searchLower = calificacionesSearch.toLowerCase();
+                   const matchesSearch = g.studentName.toLowerCase().includes(searchLower) || 
+                                         (student?.dni || "").toLowerCase().includes(searchLower);
+                   
+                   const matchesGrade = !calificacionesGradeFilter || student?.grado === calificacionesGradeFilter;
+                   const matchesMateria = !calificacionesMateriaFilter || g.materia.toLowerCase().includes(calificacionesMateriaFilter.toLowerCase());
+                   
+                   let matchesDate = true;
+                   if (calificacionesDateFilter) {
+                     const filterDate = new Date(calificacionesDateFilter + "T00:00:00").toLocaleDateString();
+                     matchesDate = g.fecha === filterDate;
+                   }
+                   
+                   return matchesSearch && matchesGrade && matchesMateria && matchesDate;
+                 });
+
+                 return (
+                   <div className="bg-white rounded-[2rem] md:rounded-[3rem] p-6 md:p-10 shadow-2xl border-t-4 border-t-blue-600 max-w-6xl mx-auto">
+                     <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-10">
+                       <div>
+                         <h3 className="text-2xl font-black text-slate-800 uppercase tracking-tight">Registros de Calificaciones</h3>
+                         <p className="text-slate-500 mt-1 text-sm font-bold">Historial completo de notas registradas en el sistema.</p>
+                         <div className="mt-2 flex items-center gap-4">
+                           <span className="text-[10px] font-black text-blue-600 bg-blue-50 px-3 py-1 rounded-full uppercase tracking-widest">
+                             Mostrando: {filteredGrades.length}
+                           </span>
+                           <span className="text-[10px] font-black text-slate-400 bg-slate-50 px-3 py-1 rounded-full uppercase tracking-widest">
+                             Total: {grades.length}
+                           </span>
+                         </div>
+                       </div>
+                       <div className="flex flex-wrap gap-2 w-full md:w-auto">
+                         <button 
+                           onClick={() => exportGradesToExcel(filteredGrades)}
+                           className="flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-3 bg-emerald-600 text-white rounded-xl font-black text-[10px] uppercase tracking-widest hover:scale-105 transition-all shadow-lg"
+                         >
+                           <FileSpreadsheet size={16} /> Excel
+                         </button>
+                         <button 
+                           onClick={() => exportGradesToPDF(filteredGrades)}
+                           className="flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-3 bg-rose-600 text-white rounded-xl font-black text-[10px] uppercase tracking-widest hover:scale-105 transition-all shadow-lg"
+                         >
+                           <FileText size={16} /> PDF
+                         </button>
+                         <button 
+                           onClick={() => {
+                             if(filteredGrades.length > 0) {
+                               const idsToRemove = new Set(filteredGrades.map(fg => fg.id));
+                               setGrades(grades.filter(g => !idsToRemove.has(g.id)));
+                               setToast({ message: "Registros filtrados eliminados", type: 'success' });
+                             }
+                           }}
+                           className="flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-3 bg-slate-900 text-white rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-red-600 transition-all shadow-lg"
+                         >
+                           <Trash2 size={16} /> Borrar Todo
+                         </button>
                        </div>
                      </div>
-                   </div>
 
-                   <div className="overflow-x-auto no-scrollbar">
-                     <table className="w-full text-left border-separate border-spacing-y-3">
-                       <thead>
-                         <tr className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                           <th className="px-6 py-4">Alumno</th>
-                           <th className="px-6 py-4">Materia / Tipo</th>
-                           <th className="px-6 py-4 text-center">Nota</th>
-                           <th className="px-6 py-4">Fecha</th>
-                           <th className="px-6 py-4 text-right">Acciones</th>
-                         </tr>
-                       </thead>
-                       <tbody>
-                         {grades
-                           .filter(g => {
-                             const student = students.find(s => s.id === g.studentId);
-                             const searchLower = calificacionesSearch.toLowerCase();
-                             const matchesStudent = g.studentName.toLowerCase().includes(searchLower) || 
-                                                    (student?.dni || "").toLowerCase().includes(searchLower) ||
-                                                    (student?.grado || "").toLowerCase().includes(searchLower) ||
-                                                    (student?.seccion || "").toLowerCase().includes(searchLower);
-                             const matchesMateria = g.materia.toLowerCase().includes(searchLower);
-                             return matchesStudent || matchesMateria;
-                           })
-                           .map(grade => {
+                     {/* Filters Grid */}
+                     <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8 bg-slate-50 p-6 rounded-3xl border border-slate-100">
+                       <div className="space-y-2">
+                         <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">Buscar Alumno</label>
+                         <div className="relative">
+                           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                           <input 
+                             type="text" 
+                             placeholder="Nombre o DNI..." 
+                             value={calificacionesSearch}
+                             onChange={(e) => setCalificacionesSearch(e.target.value)}
+                             className="w-full pl-10 pr-4 py-2 rounded-xl bg-white border-none font-bold text-slate-800 text-xs shadow-sm outline-none focus:ring-2 focus:ring-blue-500"
+                           />
+                         </div>
+                       </div>
+                       <div className="space-y-2">
+                         <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">Grado</label>
+                         <select 
+                           value={calificacionesGradeFilter}
+                           onChange={(e) => setCalificacionesGradeFilter(e.target.value)}
+                           className="w-full px-4 py-2 rounded-xl bg-white border-none font-bold text-slate-800 text-xs shadow-sm outline-none focus:ring-2 focus:ring-blue-500"
+                         >
+                           <option value="">Todos los Grados</option>
+                           {Array.from(new Set(gradeLevels.map(gl => gl.nombre))).map(g => <option key={g} value={g}>{g}</option>)}
+                         </select>
+                       </div>
+                       <div className="space-y-2">
+                         <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">Materia</label>
+                         <select 
+                           value={calificacionesMateriaFilter}
+                           onChange={(e) => setCalificacionesMateriaFilter(e.target.value)}
+                           className="w-full px-4 py-2 rounded-xl bg-white border-none font-bold text-slate-800 text-xs shadow-sm outline-none focus:ring-2 focus:ring-blue-500"
+                         >
+                           <option value="">Todas las Materias</option>
+                           {courses.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                         </select>
+                       </div>
+                       <div className="space-y-2">
+                         <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">Fecha</label>
+                         <div className="flex gap-2">
+                           <input 
+                             type="date" 
+                             value={calificacionesDateFilter}
+                             onChange={(e) => setCalificacionesDateFilter(e.target.value)}
+                             className="flex-1 px-4 py-2 rounded-xl bg-white border-none font-bold text-slate-800 text-xs shadow-sm outline-none focus:ring-2 focus:ring-blue-500"
+                           />
+                           <button 
+                             onClick={() => {
+                               setCalificacionesSearch("");
+                               setCalificacionesGradeFilter("");
+                               setCalificacionesMateriaFilter("");
+                               setCalificacionesDateFilter("");
+                             }}
+                             className="p-2 bg-white text-slate-400 hover:text-blue-600 rounded-xl shadow-sm transition-all"
+                             title="Limpiar Filtros"
+                           >
+                             <RefreshCw size={16} />
+                           </button>
+                         </div>
+                       </div>
+                     </div>
+
+                     <div className="overflow-x-auto no-scrollbar">
+                       <table className="w-full text-left border-separate border-spacing-y-3">
+                         <thead>
+                           <tr className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                             <th className="px-6 py-4">Alumno</th>
+                             <th className="px-6 py-4">Materia / Tipo</th>
+                             <th className="px-6 py-4 text-center">Nota</th>
+                             <th className="px-6 py-4">Fecha</th>
+                             <th className="px-6 py-4 text-right">Acciones</th>
+                           </tr>
+                         </thead>
+                         <tbody>
+                           {filteredGrades.map(grade => {
                              const student = students.find(s => s.id === grade.studentId);
                              return (
                                <tr key={grade.id} className="bg-white hover:bg-slate-50 transition-all group shadow-sm rounded-2xl">
@@ -2933,10 +3234,8 @@ const App = () => {
                                      </button>
                                      <button 
                                        onClick={() => {
-                                         if(confirm("¿Estás seguro de eliminar este registro?")) {
-                                           setGrades(grades.filter(g => g.id !== grade.id));
-                                           setToast({ message: "Registro eliminado", type: 'success' });
-                                         }
+                                         setGrades(grades.filter(g => g.id !== grade.id));
+                                         setToast({ message: "Registro eliminado", type: 'success' });
                                        }}
                                        className="p-2 text-rose-500 hover:bg-rose-50 rounded-lg transition-all"
                                      >
@@ -2947,19 +3246,20 @@ const App = () => {
                                </tr>
                              );
                            })}
-                       </tbody>
-                     </table>
-                     {grades.length === 0 && (
-                       <div className="py-20 text-center">
-                         <div className="w-16 h-16 bg-slate-50 text-slate-300 rounded-full flex items-center justify-center mx-auto mb-4">
-                           <FileText size={32} />
+                         </tbody>
+                       </table>
+                       {filteredGrades.length === 0 && (
+                         <div className="py-20 text-center">
+                           <div className="w-16 h-16 bg-slate-50 text-slate-300 rounded-full flex items-center justify-center mx-auto mb-4">
+                             <FileText size={32} />
+                           </div>
+                           <p className="text-slate-400 font-bold uppercase text-[10px] tracking-widest">No hay registros de notas que coincidan</p>
                          </div>
-                         <p className="text-slate-400 font-bold uppercase text-[10px] tracking-widest">No hay registros de notas</p>
-                       </div>
-                     )}
+                       )}
+                     </div>
                    </div>
-                 </div>
-               )}
+                 );
+               })()}
 
                {activeCalificacionesSubTab === 'boletas' && (
                  <div className="bg-white rounded-[2rem] md:rounded-[3rem] p-6 md:p-10 shadow-2xl border-t-4 border-t-blue-600 max-w-6xl mx-auto">
@@ -3583,6 +3883,10 @@ const App = () => {
                         onClick={() => setActiveGradosSubTab('grados')}
                         className={`px-6 py-3 rounded-lg font-black text-[10px] uppercase tracking-widest transition-all ${activeGradosSubTab === 'grados' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400'}`}
                       >Grados</button>
+                      <button 
+                        onClick={() => setActiveGradosSubTab('secciones')}
+                        className={`px-6 py-3 rounded-lg font-black text-[10px] uppercase tracking-widest transition-all ${activeGradosSubTab === 'secciones' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400'}`}
+                      >Secciones</button>
                     </div>
                   </div>
 
@@ -3590,7 +3894,10 @@ const App = () => {
                     <div className="space-y-6">
                       <div className="flex justify-end">
                         <button 
-                          onClick={() => setPanelModalType('level')}
+                          onClick={() => {
+                            setEditingLevel(null);
+                            setPanelModalType('level');
+                          }}
                           className="bg-blue-600 text-white px-8 py-4 rounded-2xl font-black flex items-center gap-3 hover:bg-blue-700 transition-all shadow-xl uppercase text-xs tracking-widest"
                         >
                           <Plus size={20} /> NUEVO NIVEL
@@ -3605,15 +3912,104 @@ const App = () => {
                               </div>
                               <h4 className="text-xl font-black text-slate-800 uppercase tracking-tight">{lvl.nombre}</h4>
                             </div>
-                            <button 
-                              onClick={() => {
-                                setLevels(levels.filter(l => l.id !== lvl.id));
-                                setToast({ message: "Nivel eliminado", type: 'success' });
-                              }}
-                              className="p-3 text-rose-500 hover:bg-rose-500 hover:text-white rounded-xl transition-all bg-rose-50"
-                            >
-                              <Trash2 size={16} />
-                            </button>
+                            <div className="flex gap-2">
+                              <button 
+                                onClick={() => {
+                                  setEditingLevel(lvl);
+                                  setPanelModalType('level');
+                                }}
+                                className="p-3 text-blue-600 hover:bg-blue-50 rounded-xl transition-all bg-blue-50"
+                              >
+                                <Edit size={16} />
+                              </button>
+                              <button 
+                                onClick={() => {
+                                  setConfirmModal({
+                                    title: "Eliminar Nivel",
+                                    message: `¿Estás seguro de eliminar el nivel "${lvl.nombre}"? Esto podría afectar a los grados asociados.`,
+                                    onConfirm: () => {
+                                      setLevels(levels.filter(l => l.id !== lvl.id));
+                                      setToast({ message: "Nivel eliminado", type: 'success' });
+                                      setConfirmModal(null);
+                                    }
+                                  });
+                                }}
+                                className="p-3 text-rose-500 hover:bg-rose-500 hover:text-white rounded-xl transition-all bg-rose-50"
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {activeGradosSubTab === 'secciones' && (
+                    <div className="space-y-6 animate-slide-up">
+                      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
+                        <div>
+                          <h3 className="text-lg font-black text-slate-900 uppercase tracking-tight">Gestión de Secciones</h3>
+                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">Administra las secciones disponibles en el sistema</p>
+                        </div>
+                        <button 
+                          onClick={() => {
+                            setEditingSection(null);
+                            setPanelModalType('section');
+                          }}
+                          className="w-full md:w-auto flex items-center justify-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-xl font-black text-[10px] uppercase tracking-widest hover:scale-105 transition-all shadow-lg"
+                          style={{ backgroundColor: activeConfig.theme.primaryColor }}
+                        ><Plus size={16} /> Nueva Sección</button>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                        {sections.map((s, i) => (
+                          <div key={i} className="bg-slate-50 p-6 rounded-2xl border border-slate-100 flex items-center justify-between group hover:border-blue-200 transition-all">
+                            <div className="flex items-center gap-4">
+                              <div className="w-12 h-12 rounded-xl bg-white shadow-sm flex items-center justify-center font-black text-blue-600 text-lg" style={{ color: activeConfig.theme.primaryColor }}>
+                                {s}
+                              </div>
+                              <div>
+                                <p className="text-sm font-black text-slate-900 uppercase">Sección {s}</p>
+                                <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Disponible para todos los grados</p>
+                              </div>
+                            </div>
+                            <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <button 
+                                onClick={() => {
+                                  setEditingSection(s);
+                                  setPanelModalType('section');
+                                }}
+                                className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg"
+                              ><Edit size={14} /></button>
+                              <button 
+                                onClick={() => {
+                                  setConfirmModal({
+                                    title: "Eliminar Sección",
+                                    message: `¿Estás seguro de eliminar la sección "${s}"?`,
+                                    onConfirm: () => {
+                                      const isUsed = gradeLevels.some(gl => gl.seccion === s);
+                                      if (isUsed) {
+                                        setConfirmModal({
+                                          title: "Sección en Uso",
+                                          message: `La sección "${s}" está siendo usada por algunos grados. ¿Estás seguro de eliminarla? Los grados mantendrán el nombre de la sección pero ya no estará disponible para nuevos grados.`,
+                                          onConfirm: () => {
+                                            setSections(sections.filter(sec => sec !== s));
+                                            setToast({ message: "Sección eliminada", type: 'success' });
+                                            setConfirmModal(null);
+                                          }
+                                        });
+                                        return;
+                                      }
+                                      setSections(sections.filter(sec => sec !== s));
+                                      setToast({ message: "Sección eliminada", type: 'success' });
+                                      setConfirmModal(null);
+                                    }
+                                  });
+                                }}
+                                className="p-2 text-rose-500 hover:bg-rose-50 rounded-lg"
+                              ><Trash2 size={14} /></button>
+                            </div>
                           </div>
                         ))}
                       </div>
@@ -3624,7 +4020,10 @@ const App = () => {
                     <div className="space-y-6">
                       <div className="flex justify-end">
                         <button 
-                          onClick={() => setPanelModalType('grade')}
+                          onClick={() => {
+                            setEditingGradeLevel(null);
+                            setPanelModalType('grade');
+                          }}
                           className="bg-blue-600 text-white px-8 py-4 rounded-2xl font-black flex items-center gap-3 hover:bg-blue-700 transition-all shadow-xl uppercase text-xs tracking-widest"
                         >
                           <Plus size={20} /> NUEVO GRADO
@@ -3639,15 +4038,33 @@ const App = () => {
                                 <p className="text-[10px] font-black text-blue-600 uppercase tracking-widest bg-blue-50 px-3 py-1 rounded-full inline-block mb-2">{level?.nombre || 'Sin Nivel'}</p>
                                 <h4 className="text-2xl font-black text-slate-800">{gl.nombre} <span className="text-blue-600">"{gl.seccion}"</span></h4>
                               </div>
-                              <button 
-                                onClick={() => {
-                                  setGradeLevels(gradeLevels.filter(g => g.id !== gl.id));
-                                  setToast({ message: "Grado eliminado", type: 'success' });
-                                }}
-                                className="p-3 text-rose-500 hover:bg-rose-500 hover:text-white rounded-xl transition-all bg-rose-50"
-                              >
-                                <Trash2 size={16} />
-                              </button>
+                              <div className="flex gap-2">
+                                <button 
+                                  onClick={() => {
+                                    setEditingGradeLevel(gl);
+                                    setPanelModalType('grade');
+                                  }}
+                                  className="p-3 text-blue-600 hover:bg-blue-50 rounded-xl transition-all bg-blue-50"
+                                >
+                                  <Edit size={16} />
+                                </button>
+                                <button 
+                                  onClick={() => {
+                                    setConfirmModal({
+                                      title: "Eliminar Grado",
+                                      message: `¿Estás seguro de eliminar el grado "${gl.nombre} ${gl.seccion}"?`,
+                                      onConfirm: () => {
+                                        setGradeLevels(gradeLevels.filter(g => g.id !== gl.id));
+                                        setToast({ message: "Grado eliminado", type: 'success' });
+                                        setConfirmModal(null);
+                                      }
+                                    });
+                                  }}
+                                  className="p-3 text-rose-500 hover:bg-rose-500 hover:text-white rounded-xl transition-all bg-rose-50"
+                                >
+                                  <Trash2 size={16} />
+                                </button>
+                              </div>
                             </div>
                           );
                         })}
@@ -4274,9 +4691,42 @@ const App = () => {
                             </div>
 
                             <div className="bg-white p-6 rounded-[2.5rem] shadow-2xl border border-slate-100">
+                              <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4 ml-2">Días de Clase</h4>
+                              <div className="grid grid-cols-2 gap-2">
+                                {['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'].map(dia => (
+                                  <button
+                                    key={dia}
+                                    onClick={() => {
+                                      if(schoolDays.includes(dia)) {
+                                        if (schoolDays.length > 1) {
+                                          setSchoolDays(schoolDays.filter(d => d !== dia));
+                                        } else {
+                                          setToast({ message: "Debe haber al menos un día de clase", type: 'error' });
+                                        }
+                                      } else {
+                                        const allDays = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
+                                        const newDays = [...schoolDays, dia].sort((a, b) => allDays.indexOf(a) - allDays.indexOf(b));
+                                        setSchoolDays(newDays);
+                                      }
+                                    }}
+                                    className={`px-3 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all flex items-center justify-between ${schoolDays.includes(dia) ? 'bg-blue-600 text-white shadow-lg' : 'bg-slate-50 text-slate-400 border border-slate-100 hover:border-blue-200'}`}
+                                    style={schoolDays.includes(dia) ? { backgroundColor: activeConfig.theme.primaryColor } : {}}
+                                  >
+                                    {dia}
+                                    {schoolDays.includes(dia) ? <X size={10} /> : <Plus size={10} />}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+
+                            <div className="bg-white p-6 rounded-[2.5rem] shadow-2xl border border-slate-100">
                               <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4 ml-2">Filtros de Horario</h4>
                               <div className="space-y-4">
-                                <select className="w-full p-3 rounded-xl bg-slate-50 border-none font-bold text-xs uppercase outline-none" id="schedule-grade-filter">
+                                <select 
+                                  className="w-full p-3 rounded-xl bg-slate-50 border-none font-bold text-xs uppercase outline-none" 
+                                  id="schedule-grade-filter"
+                                  onChange={() => setScheduleGradeFilter((document.getElementById('schedule-grade-filter') as HTMLSelectElement).value)}
+                                >
                                   <option value="">Seleccionar Grado</option>
                                   {gradeLevels.map(gl => <option key={gl.id} value={gl.id}>{gl.nombre} "{gl.seccion}"</option>)}
                                 </select>
@@ -4287,20 +4737,20 @@ const App = () => {
                           {/* Main: Schedule Grid */}
                           <div className="lg:col-span-3 bg-white p-6 md:p-10 rounded-[2.5rem] shadow-2xl border border-slate-100 overflow-x-auto no-scrollbar">
                             <div className="min-w-[800px]">
-                              <div className="grid grid-cols-8 gap-2 mb-4">
+                              <div className={`grid gap-2 mb-4`} style={{ gridTemplateColumns: `repeat(${schoolDays.length + 1}, 1fr)` }}>
                                 <div className="p-2"></div>
-                                {['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'].map(dia => (
+                                {schoolDays.map(dia => (
                                   <div key={dia} className="text-center font-black text-[10px] uppercase tracking-widest text-slate-400">{dia}</div>
                                 ))}
                               </div>
                               <div className="space-y-2">
                                 {timeSlots.map(slot => (
-                                  <div key={slot.id} className="grid grid-cols-8 gap-2">
+                                  <div key={slot.id} className={`grid gap-2`} style={{ gridTemplateColumns: `repeat(${schoolDays.length + 1}, 1fr)` }}>
                                     <div className="flex items-center justify-center bg-slate-50 rounded-xl p-2">
                                       <span className="font-black text-[10px] text-slate-400">{slot.start}</span>
                                     </div>
-                                    {['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'].map(dia => {
-                                      const targetId = (document.getElementById('schedule-grade-filter') as HTMLSelectElement)?.value;
+                                    {schoolDays.map(dia => {
+                                      const targetId = scheduleGradeFilter;
                                       const sch = schedules.find(s => s.dia === dia && s.inicio === slot.start && s.targetId === targetId);
                                       return (
                                         <div 
@@ -4310,7 +4760,7 @@ const App = () => {
                                             if((draggedCourse || draggedSchedule) && targetId) {
                                               const courseToUse = draggedCourse || courses.find(c => c.name === draggedSchedule?.materia);
                                               if (!courseToUse) return;
-
+                                              
                                               // Check for conflicts in the same grade
                                               const conflict = schedules.find(s => s.dia === dia && s.inicio === slot.start && s.targetId === targetId && s.id !== draggedSchedule?.id);
                                               if(conflict) {
@@ -4339,7 +4789,7 @@ const App = () => {
 
                                               setSchedules([...newSchedules, {
                                                 id: Date.now().toString(),
-                                                dia,
+                                                dia: dia as any,
                                                 inicio: slot.start,
                                                 fin: slot.end,
                                                 materia: courseToUse.name,
@@ -5214,28 +5664,103 @@ const App = () => {
         </div>
       )}
 
+      {/* --- CONFIRM MODAL --- */}
+      {confirmModal && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-slate-950/80 backdrop-blur-md animate-fade-in">
+          <div className="bg-white rounded-[3rem] shadow-2xl w-full max-w-md overflow-hidden animate-slide-up border border-slate-100">
+            <div className="p-8 text-center space-y-6">
+              <div className="w-20 h-20 bg-rose-50 text-rose-500 rounded-full flex items-center justify-center mx-auto shadow-inner">
+                <AlertCircle size={40} />
+              </div>
+              <div className="space-y-2">
+                <h3 className="text-2xl font-black text-slate-900 uppercase tracking-tight">{confirmModal.title}</h3>
+                <p className="text-slate-500 font-bold text-sm leading-relaxed">{confirmModal.message}</p>
+              </div>
+              <div className="flex gap-4 pt-4">
+                <button 
+                  onClick={() => setConfirmModal(null)}
+                  className="flex-1 py-4 bg-slate-100 text-slate-600 rounded-2xl font-black uppercase tracking-widest text-[10px] hover:bg-slate-200 transition-all"
+                >Cancelar</button>
+                <button 
+                  onClick={confirmModal.onConfirm}
+                  className="flex-1 py-4 bg-rose-600 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-lg shadow-rose-200 hover:bg-rose-700 transition-all"
+                >Confirmar</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* --- USER MODAL --- */}
       {/* --- PANEL MODALS --- */}
+      {panelModalType === 'section' && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-6 bg-slate-950/70 backdrop-blur-xl animate-fade-in">
+          <div className="bg-white rounded-[4rem] shadow-2xl w-full max-w-md overflow-hidden animate-slide-up border border-white/20">
+            <div className="p-10 border-b border-slate-100 flex justify-between items-center bg-blue-700 text-white" style={{ backgroundColor: activeConfig.theme.primaryColor }}>
+              <h2 className="text-2xl font-black uppercase tracking-widest">{editingSection ? 'Editar Sección' : 'Nueva Sección'}</h2>
+              <button onClick={() => { setPanelModalType(null); setEditingSection(null); }} className="hover:bg-white/20 p-3 rounded-full transition-all"><X size={24} /></button>
+            </div>
+            <form onSubmit={(e: any) => {
+              e.preventDefault();
+              const nombre = e.target.nombre.value.toUpperCase();
+              if(nombre) {
+                if (editingSection) {
+                  setSections(sections.map(s => s === editingSection ? nombre : s));
+                  setGradeLevels(gradeLevels.map(gl => gl.seccion === editingSection ? { ...gl, seccion: nombre } : gl));
+                  setToast({ message: "Sección actualizada", type: 'success' });
+                } else {
+                  if(sections.includes(nombre)) {
+                    setToast({ message: "La sección ya existe", type: 'error' });
+                    return;
+                  }
+                  setSections([...sections, nombre]);
+                  setToast({ message: "Sección creada", type: 'success' });
+                }
+                setPanelModalType(null);
+                setEditingSection(null);
+              }
+            }} className="p-10 space-y-6">
+              <div className="space-y-2">
+                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Nombre de la Sección</label>
+                <input name="nombre" required defaultValue={editingSection || ''} placeholder="Ej. A" className="w-full p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-lg outline-none transition-all" />
+              </div>
+              <button type="submit" className="w-full py-5 bg-blue-600 text-white rounded-2xl font-black uppercase tracking-widest text-xs shadow-xl hover:bg-blue-700 transition-all" style={{ backgroundColor: activeConfig.theme.primaryColor }}>
+                {editingSection ? 'Actualizar Sección' : 'Guardar Sección'}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
       {panelModalType === 'level' && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-6 bg-slate-950/70 backdrop-blur-xl animate-fade-in">
           <div className="bg-white rounded-[4rem] shadow-2xl w-full max-w-md overflow-hidden animate-slide-up border border-white/20">
-            <div className="p-10 border-b border-slate-100 flex justify-between items-center bg-blue-700 text-white">
-              <h2 className="text-2xl font-black uppercase tracking-widest">Nuevo Nivel</h2>
-              <button onClick={() => setPanelModalType(null)} className="hover:bg-white/20 p-3 rounded-full transition-all"><X size={24} /></button>
+            <div className="p-10 border-b border-slate-100 flex justify-between items-center bg-blue-700 text-white" style={{ backgroundColor: activeConfig.theme.primaryColor }}>
+              <h2 className="text-2xl font-black uppercase tracking-widest">{editingLevel ? 'Editar Nivel' : 'Nuevo Nivel'}</h2>
+              <button onClick={() => { setPanelModalType(null); setEditingLevel(null); }} className="hover:bg-white/20 p-3 rounded-full transition-all"><X size={24} /></button>
             </div>
             <form onSubmit={(e: any) => {
               e.preventDefault();
               const nombre = e.target.nombre.value;
               if(nombre) {
-                setLevels([...levels, { id: Date.now().toString(), nombre }]);
+                if (editingLevel) {
+                  setLevels(levels.map(l => l.id === editingLevel.id ? { ...l, nombre } : l));
+                  setToast({ message: "Nivel actualizado", type: 'success' });
+                } else {
+                  setLevels([...levels, { id: Date.now().toString(), nombre }]);
+                  setToast({ message: "Nivel creado", type: 'success' });
+                }
                 setPanelModalType(null);
+                setEditingLevel(null);
               }
             }} className="p-10 space-y-6">
               <div className="space-y-2">
                 <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Nombre del Nivel</label>
-                <input name="nombre" required placeholder="Ej. Primaria" className="w-full p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-lg outline-none transition-all" />
+                <input name="nombre" required defaultValue={editingLevel?.nombre || ''} placeholder="Ej. Primaria" className="w-full p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-lg outline-none transition-all" />
               </div>
-              <button type="submit" className="w-full py-5 bg-blue-600 text-white rounded-2xl font-black uppercase tracking-widest text-xs shadow-xl hover:bg-blue-700 transition-all">Guardar Nivel</button>
+              <button type="submit" className="w-full py-5 bg-blue-600 text-white rounded-2xl font-black uppercase tracking-widest text-xs shadow-xl hover:bg-blue-700 transition-all" style={{ backgroundColor: activeConfig.theme.primaryColor }}>
+                {editingLevel ? 'Actualizar Nivel' : 'Guardar Nivel'}
+              </button>
             </form>
           </div>
         </div>
@@ -5244,9 +5769,9 @@ const App = () => {
       {panelModalType === 'grade' && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-6 bg-slate-950/70 backdrop-blur-xl animate-fade-in">
           <div className="bg-white rounded-[4rem] shadow-2xl w-full max-w-lg overflow-hidden animate-slide-up border border-white/20">
-            <div className="p-10 border-b border-slate-100 flex justify-between items-center bg-blue-700 text-white">
-              <h2 className="text-2xl font-black uppercase tracking-widest">Nuevo Grado</h2>
-              <button onClick={() => setPanelModalType(null)} className="hover:bg-white/20 p-3 rounded-full transition-all"><X size={24} /></button>
+            <div className="p-10 border-b border-slate-100 flex justify-between items-center bg-blue-700 text-white" style={{ backgroundColor: activeConfig.theme.primaryColor }}>
+              <h2 className="text-2xl font-black uppercase tracking-widest">{editingGradeLevel ? 'Editar Grado' : 'Nuevo Grado'}</h2>
+              <button onClick={() => { setPanelModalType(null); setEditingGradeLevel(null); }} className="hover:bg-white/20 p-3 rounded-full transition-all"><X size={24} /></button>
             </div>
             <form onSubmit={(e: any) => {
               e.preventDefault();
@@ -5254,29 +5779,38 @@ const App = () => {
               const seccion = e.target.seccion.value;
               const nivelId = e.target.nivelId.value;
               if(nombre && seccion && nivelId) {
-                setGradeLevels([...gradeLevels, { id: Date.now().toString(), nombre, seccion, nivelId }]);
+                if (editingGradeLevel) {
+                  setGradeLevels(gradeLevels.map(gl => gl.id === editingGradeLevel.id ? { ...gl, nombre, seccion, nivelId } : gl));
+                  setToast({ message: "Grado actualizado", type: 'success' });
+                } else {
+                  setGradeLevels([...gradeLevels, { id: Date.now().toString(), nombre, seccion, nivelId }]);
+                  setToast({ message: "Grado creado", type: 'success' });
+                }
                 setPanelModalType(null);
+                setEditingGradeLevel(null);
               }
             }} className="p-10 space-y-6">
               <div className="space-y-2">
                 <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Nombre del Grado</label>
-                <input name="nombre" required placeholder="Ej. 1er Grado" className="w-full p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-lg outline-none transition-all" />
+                <input name="nombre" required defaultValue={editingGradeLevel?.nombre || ''} placeholder="Ej. 1er Grado" className="w-full p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-lg outline-none transition-all" />
               </div>
               <div className="grid grid-cols-2 gap-6">
                 <div className="space-y-2">
                   <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Sección</label>
-                  <select name="seccion" className="w-full p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-lg outline-none appearance-none">
-                    {['A', 'B', 'C', 'D', 'E', 'F', 'G'].map(s => <option key={s} value={s}>{s}</option>)}
+                  <select name="seccion" defaultValue={editingGradeLevel?.seccion || 'A'} className="w-full p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-lg outline-none appearance-none">
+                    {sections.map(s => <option key={s} value={s}>{s}</option>)}
                   </select>
                 </div>
                 <div className="space-y-2">
                   <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Nivel Académico</label>
-                  <select name="nivelId" className="w-full p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-lg outline-none appearance-none">
+                  <select name="nivelId" defaultValue={editingGradeLevel?.nivelId || levels[0]?.id} className="w-full p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-lg outline-none appearance-none">
                     {levels.map(l => <option key={l.id} value={l.id}>{l.nombre}</option>)}
                   </select>
                 </div>
               </div>
-              <button type="submit" className="w-full py-5 bg-blue-600 text-white rounded-2xl font-black uppercase tracking-widest text-xs shadow-xl hover:bg-blue-700 transition-all">Crear Grado desde Cero</button>
+              <button type="submit" className="w-full py-5 bg-blue-600 text-white rounded-2xl font-black uppercase tracking-widest text-xs shadow-xl hover:bg-blue-700 transition-all" style={{ backgroundColor: activeConfig.theme.primaryColor }}>
+                {editingGradeLevel ? 'Actualizar Grado' : 'Guardar Grado'}
+              </button>
             </form>
           </div>
         </div>
@@ -6218,32 +6752,58 @@ const App = () => {
               </div>
 
               {currentUser?.role === 'admin' && !currentUser.parentId && (
-                <div className="space-y-4 pt-4 border-t border-slate-100">
-                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Permisos de Acceso (Mínimo 1)</label>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                    {[
-                      { id: 'dashboard', label: 'Dashboard' },
-                      { id: 'estudiantes', label: 'Base Datos' },
-                      { id: 'asistencia', label: 'Asistencia' },
-                      { id: 'reportes', label: 'Reportes' },
-                      { id: 'alerta', label: 'Alerta' },
-                      { id: 'calificaciones', label: 'Notas' },
-                      { id: 'mi-panel', label: 'Mi Panel' },
-                      { id: 'config', label: 'Config' }
-                    ].map(perm => (
-                      <label key={perm.id} className="flex items-center gap-2 p-3 rounded-xl bg-slate-50 border border-slate-100 cursor-pointer hover:bg-slate-100 transition-all">
-                        <input 
-                          type="checkbox" 
-                          name="permissions" 
-                          value={perm.id} 
-                          defaultChecked={editingUser ? editingUser.permissions.includes(perm.id) : true}
-                          className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500"
-                        />
-                        <span className="text-[10px] font-bold text-slate-600 uppercase tracking-tight">{perm.label}</span>
-                      </label>
-                    ))}
+                <>
+                  <div className="space-y-4 pt-4 border-t border-slate-100">
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Permisos de Acceso (Mínimo 1)</label>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                      {[
+                        { id: 'dashboard', label: 'Dashboard' },
+                        { id: 'estudiantes', label: 'Base Datos' },
+                        { id: 'asistencia', label: 'Asistencia' },
+                        { id: 'reportes', label: 'Reportes' },
+                        { id: 'alerta', label: 'Alerta' },
+                        { id: 'calificaciones', label: 'Notas' },
+                        { id: 'mi-panel', label: 'Mi Panel' },
+                        { id: 'config', label: 'Config' }
+                      ].map(perm => (
+                        <label key={perm.id} className="flex items-center gap-2 p-3 rounded-xl bg-slate-50 border border-slate-100 cursor-pointer hover:bg-slate-100 transition-all">
+                          <input 
+                            type="checkbox" 
+                            name="permissions" 
+                            value={perm.id} 
+                            defaultChecked={editingUser ? editingUser.permissions.includes(perm.id) : true}
+                            className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500"
+                          />
+                          <span className="text-[10px] font-bold text-slate-600 uppercase tracking-tight">{perm.label}</span>
+                        </label>
+                      ))}
+                    </div>
                   </div>
-                </div>
+
+                  <div className="space-y-4 pt-4 border-t border-slate-100">
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Sub-Permisos (Mi Panel)</label>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                      {[
+                        { id: 'mi-panel:perfil', label: 'Perfil' },
+                        { id: 'mi-panel:grados', label: 'Grados' },
+                        { id: 'mi-panel:horarios', label: 'Horarios' },
+                        { id: 'mi-panel:alerta', label: 'Config Alerta' },
+                        { id: 'mi-panel:profesores', label: 'Profesores' }
+                      ].map(perm => (
+                        <label key={perm.id} className="flex items-center gap-2 p-3 rounded-xl bg-slate-50 border border-slate-100 cursor-pointer hover:bg-slate-100 transition-all">
+                          <input 
+                            type="checkbox" 
+                            name="permissions" 
+                            value={perm.id} 
+                            defaultChecked={editingUser ? editingUser.permissions.includes(perm.id) : true}
+                            className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500"
+                          />
+                          <span className="text-[10px] font-bold text-slate-600 uppercase tracking-tight">{perm.label}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                </>
               )}
 
               <div className="flex gap-3 md:gap-4 pt-4 md:pt-6">

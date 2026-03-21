@@ -21,6 +21,7 @@ interface SidebarProps {
   currentUser: User | null;
   activeConfig: AppConfig;
   onLogout: () => void;
+  navItems: { id: string, icon: any, label: string }[];
 }
 
 const Sidebar: React.FC<SidebarProps> = ({
@@ -30,19 +31,9 @@ const Sidebar: React.FC<SidebarProps> = ({
   setIsMobileMenuOpen,
   currentUser,
   activeConfig,
-  onLogout
+  onLogout,
+  navItems
 }) => {
-  const menuItems = [
-    { id: 'dashboard', icon: LayoutDashboard, label: 'Dashboard' },
-    { id: 'estudiantes', icon: Users, label: 'Estudiantes' },
-    { id: 'asistencia', icon: CalendarCheck, label: 'Asistencia' },
-    { id: 'calificaciones', icon: Award, label: 'Calificaciones' },
-    { id: 'alerta', icon: AlertCircle, label: 'Alertas' },
-    { id: 'reportes', icon: BarChart3, label: 'Reportes' },
-    { id: 'mi-panel', icon: Database, label: 'Mi Panel' },
-    { id: 'config', icon: Settings, label: 'Configuración' },
-  ];
-
   return (
     <aside className={`fixed inset-y-0 left-0 z-50 w-72 bg-slate-900 text-white transform transition-transform duration-300 ease-in-out lg:relative lg:translate-x-0 ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}`}>
       <div className="h-full flex flex-col">
@@ -59,24 +50,22 @@ const Sidebar: React.FC<SidebarProps> = ({
         </div>
 
         <nav className="flex-1 overflow-y-auto p-4 space-y-2 no-scrollbar">
-          {menuItems.map((item) => (
-            currentUser?.permissions.includes(item.id) && (
-              <button
-                key={item.id}
-                onClick={() => { setActiveTab(item.id); setIsMobileMenuOpen(false); }}
-                className={`w-full flex items-center gap-4 px-6 py-4 rounded-2xl transition-all group ${activeTab === item.id ? 'bg-white text-slate-900 shadow-xl scale-105' : 'text-slate-400 hover:bg-white/5 hover:text-white'}`}
-              >
-                <item.icon size={20} className={activeTab === item.id ? 'text-blue-600' : 'group-hover:text-white'} />
-                <span className="text-[11px] font-black uppercase tracking-widest">{item.label}</span>
-              </button>
-            )
+          {navItems.map((item) => (
+            <button
+              key={item.id}
+              onClick={() => { setActiveTab(item.id); setIsMobileMenuOpen(false); }}
+              className={`w-full flex items-center gap-4 px-6 py-4 rounded-2xl transition-all group ${activeTab === item.id ? 'bg-white text-slate-900 shadow-xl scale-105' : 'text-slate-400 hover:bg-white/5 hover:text-white'}`}
+            >
+              <item.icon size={20} className={activeTab === item.id ? 'text-blue-600' : 'group-hover:text-white'} style={activeTab === item.id ? { color: activeConfig.theme.primaryColor } : {}} />
+              <span className="text-[11px] font-black uppercase tracking-widest">{item.label}</span>
+            </button>
           ))}
         </nav>
 
         <div className="p-6 border-t border-white/5">
           <div className="bg-white/5 rounded-3xl p-4 mb-4">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center font-black text-sm">
+              <div className="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center font-black text-sm" style={{ backgroundColor: activeConfig.theme.primaryColor }}>
                 {currentUser?.username.charAt(0).toUpperCase()}
               </div>
               <div className="overflow-hidden">
