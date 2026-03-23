@@ -1,19 +1,21 @@
 @import "tailwindcss";
 
 @theme {
-  --font-sans: "Poppins", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: var(--font-family, "Poppins"), ui-sans-serif, system-ui, sans-serif;
   --radius-4xl: 2rem;
   --radius-5xl: 3rem;
+  --color-primary: var(--primary-color, #1e3a8a);
+  --color-secondary: var(--secondary-color, #1e40af);
 }
 
 body {
-    font-family: 'Poppins', sans-serif;
+    font-family: var(--font-family, 'Poppins'), sans-serif;
     background-color: #f1f5f9;
     color: #0f172a;
 }
 
 .gradient-brand {
-    background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 100%);
+    background: linear-gradient(135deg, var(--primary-color, #1e3a8a) 0%, var(--secondary-color, #1e40af) 100%);
 }
 
 .glass-card {
@@ -24,7 +26,7 @@ body {
 
 .sidebar-active {
     background: rgba(255, 255, 255, 0.1);
-    border-left: 3px solid #fbbf24;
+    border-left: 3px solid var(--primary-color, #fbbf24);
 }
 
 @keyframes slideUp {

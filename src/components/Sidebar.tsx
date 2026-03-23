@@ -40,7 +40,7 @@ const Sidebar: React.FC<SidebarProps> = ({
         <div className="p-8 border-b border-white/5">
           <div className="flex items-center gap-4 mb-6">
             <div className="w-12 h-12 rounded-2xl bg-white shadow-2xl flex items-center justify-center overflow-hidden">
-              {activeConfig.logo ? <img src={activeConfig.logo} className="w-8 h-8 object-contain" /> : <GraduationCap size={24} className="text-slate-900" />}
+              {activeConfig.logo ? <img src={activeConfig.logo} className="w-8 h-8 object-contain" /> : <GraduationCap size={24} className="text-slate-900" style={{ color: 'var(--primary-color)' }} />}
             </div>
             <div>
               <h1 className="text-lg font-black tracking-tighter uppercase leading-none">{activeConfig.siteName}</h1>
@@ -56,7 +56,7 @@ const Sidebar: React.FC<SidebarProps> = ({
               onClick={() => { setActiveTab(item.id); setIsMobileMenuOpen(false); }}
               className={`w-full flex items-center gap-4 px-6 py-4 rounded-2xl transition-all group ${activeTab === item.id ? 'bg-white text-slate-900 shadow-xl scale-105' : 'text-slate-400 hover:bg-white/5 hover:text-white'}`}
             >
-              <item.icon size={20} className={activeTab === item.id ? 'text-blue-600' : 'group-hover:text-white'} style={activeTab === item.id ? { color: activeConfig.theme.primaryColor } : {}} />
+              <item.icon size={20} className={activeTab === item.id ? '' : 'group-hover:text-white'} style={activeTab === item.id ? { color: 'var(--primary-color)' } : {}} />
               <span className="text-[11px] font-black uppercase tracking-widest">{item.label}</span>
             </button>
           ))}
@@ -65,7 +65,7 @@ const Sidebar: React.FC<SidebarProps> = ({
         <div className="p-6 border-t border-white/5">
           <div className="bg-white/5 rounded-3xl p-4 mb-4">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center font-black text-sm" style={{ backgroundColor: activeConfig.theme.primaryColor }}>
+              <div className="w-10 h-10 rounded-xl flex items-center justify-center font-black text-sm" style={{ backgroundColor: 'var(--primary-color)' }}>
                 {currentUser?.username.charAt(0).toUpperCase()}
               </div>
               <div className="overflow-hidden">

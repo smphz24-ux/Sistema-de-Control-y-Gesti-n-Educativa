@@ -82,6 +82,8 @@ import AdminLoginModal from './components/AdminLoginModal';
 declare var jsQR: any;
 declare var jspdf: any;
 
+const ALL_PERMISSIONS = ['dashboard', 'estudiantes', 'asistencia', 'reportes', 'alerta', 'calificaciones', 'mi-panel', 'config', 'horarios', 'mi-panel:grados', 'mi-panel:alerta', 'mi-panel:horario'];
+
 const App = () => {
   // --- State ---
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -313,20 +315,31 @@ const App = () => {
         username: 'admin',
         password: '1234',
         role: 'admin',
-        permissions: ['dashboard', 'estudiantes', 'asistencia', 'reportes', 'alerta', 'calificaciones', 'mi-panel', 'config', 'horarios']
+        permissions: ALL_PERMISSIONS
       };
 
       if (!serverUsers || serverUsers.length === 0) {
         setUsers([defaultAdmin]);
         await api.saveUsers([defaultAdmin]);
       } else {
-        const hasAdmin = serverUsers.some((u: AppUser) => u.role === 'admin');
+        const updatedUsers = serverUsers.map((u: AppUser) => {
+          if (u.role === 'admin') {
+            return { ...u, permissions: ALL_PERMISSIONS };
+          }
+          return u;
+        });
+        
+        const hasAdmin = updatedUsers.some((u: AppUser) => u.role === 'admin');
         if (!hasAdmin) {
-          const updatedUsers = [defaultAdmin, ...serverUsers];
-          setUsers(updatedUsers);
-          await api.saveUsers(updatedUsers);
+          const finalUsers = [defaultAdmin, ...updatedUsers];
+          setUsers(finalUsers);
+          await api.saveUsers(finalUsers);
         } else {
-          setUsers(serverUsers);
+          setUsers(updatedUsers);
+          // Save updated permissions if they changed
+          if (JSON.stringify(updatedUsers) !== JSON.stringify(serverUsers)) {
+            await api.saveUsers(updatedUsers);
+          }
         }
       }
     } catch (e) {
@@ -675,6 +688,7 @@ const App = () => {
   useEffect(() => {
     const config = currentUser?.config || globalConfig;
     document.documentElement.style.setProperty('--primary-color', config.theme.primaryColor);
+    document.documentElement.style.setProperty('--primary-color-15', config.theme.primaryColor + '15');
     document.documentElement.style.setProperty('--secondary-color', config.theme.secondaryColor);
     document.documentElement.style.setProperty('--font-family', config.theme.fontFamily);
   }, [currentUser, globalConfig]);
@@ -947,15 +961,15 @@ const App = () => {
     if (isMainAdmin) {
       permissions = ['dashboard', 'estudiantes', 'asistencia', 'reportes', 'alerta', 'calificaciones', 'mi-panel', 'config'];
       // Grant all sub-permissions too
-      permissions.push('mi-panel:perfil', 'mi-panel:grados', 'mi-panel:horarios', 'mi-panel:alerta');
+      permissions.push('mi-panel:perfil', 'mi-panel:grados', 'mi-panel:horarios', 'mi-panel:alerta', 'mi-panel:profesores');
     } else {
       // Get selected permissions from form
       const selectedPerms = formData.getAll('permissions') as string[];
       permissions = selectedPerms.length > 0 ? selectedPerms : (editingUser?.permissions || ['mi-panel']);
       
-      // If mi-panel is selected but no sub-perms, add default ones
+      // If mi-panel is selected but no sub-perms, add all sub-perms as default
       if (permissions.includes('mi-panel') && !permissions.some(p => p.startsWith('mi-panel:'))) {
-        permissions.push('mi-panel:perfil');
+        permissions.push('mi-panel:perfil', 'mi-panel:grados', 'mi-panel:horarios', 'mi-panel:alerta', 'mi-panel:profesores');
       }
     }
 
@@ -1434,19 +1448,20 @@ const App = () => {
     );
     
     if (user) {
+      const userWithAllPerms = user.role === 'admin' ? { ...user, permissions: ALL_PERMISSIONS } : user;
       // If password was plain text, update it to hashed
-      if (user.password === password) {
-        const updatedUser = { ...user, password: hashedPassword };
+      if (userWithAllPerms.password === password) {
+        const updatedUser = { ...userWithAllPerms, password: hashedPassword };
         setUsers(users.map(u => u.id === user.id ? updatedUser : u));
         setCurrentUser(updatedUser);
       } else {
-        setCurrentUser(user);
+        setCurrentUser(userWithAllPerms);
       }
       setIsAuthenticated(true);
       setShowLanding(false);
       
       // Set active tab to first available permission
-      const firstTab = user.permissions.find(p => !p.includes(':'));
+      const firstTab = userWithAllPerms.permissions.find(p => !p.includes(':'));
       if (firstTab) {
         setActiveTab(firstTab as any);
         // If the first tab is mi-panel, set the subtab to the first available sub-permission
@@ -1756,19 +1771,20 @@ const App = () => {
     );
     
     if (adminUser) {
+      const adminWithAllPerms = { ...adminUser, permissions: ALL_PERMISSIONS };
       // Update password to hashed if it was plain text
-      if (adminUser.password === adminLoginPassword) {
-        const updatedUser = { ...adminUser, password: hashedPassword };
+      if (adminWithAllPerms.password === adminLoginPassword) {
+        const updatedUser = { ...adminWithAllPerms, password: hashedPassword };
         setUsers(users.map(u => u.id === adminUser.id ? updatedUser : u));
         setCurrentUser(updatedUser);
       } else {
-        setCurrentUser(adminUser);
+        setCurrentUser(adminWithAllPerms);
       }
       setShowLanding(false);
       setIsAdminLoginModalOpen(false);
       setAdminLoginPassword("");
       setIsAuthenticated(true);
-      setToast({ message: `Bienvenido Administrador, ${adminUser.fullName || adminUser.username}`, type: 'success' });
+      setToast({ message: `Bienvenido Administrador, ${adminWithAllPerms.fullName || adminWithAllPerms.username}`, type: 'success' });
     } else {
       setToast({ message: "Contraseña administrativa incorrecta.", type: 'error' });
     }
@@ -1802,6 +1818,11 @@ const App = () => {
     }
   }, [activeTab, currentUser, activePanelSubTab]);
 
+  const handleVerifyPassword = async (password: string) => {
+    const hashedPassword = await hashPassword(password);
+    return users.some(u => u.password === password || u.password === hashedPassword);
+  };
+
   return (
     <>
       {showLanding ? (
@@ -1810,6 +1831,8 @@ const App = () => {
           onConsultasSearch={handleConsultasSearch}
           onAdminLogin={() => setIsAdminLoginModalOpen(true)}
           onLogin={() => setShowLanding(false)}
+          onMarkAttendance={markAttendance}
+          onVerifyPassword={handleVerifyPassword}
         />
       ) : !isAuthenticated ? (
         <Login 
@@ -2549,22 +2572,22 @@ const App = () => {
 
           {/* ALERTA Section */}
           {activeTab === 'alerta' && (
-            <div className="animate-slide-up space-y-8">
-              <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
-                <div>
-                  <h2 className="text-4xl font-black text-slate-800 tracking-tight">ALERTA</h2>
-                  <p className="text-slate-500 font-medium">Gestión de Incidencias y Reportes de Conducta.</p>
+            <div className="animate-slide-up space-y-6 md:space-y-8">
+              <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 md:gap-6">
+                <div className="w-full md:w-auto">
+                  <h2 className="text-3xl md:text-4xl font-black text-slate-800 tracking-tight">ALERTA</h2>
+                  <p className="text-slate-500 font-medium text-sm md:text-base">Gestión de Incidencias y Reportes de Conducta.</p>
                 </div>
-                <div className="flex flex-row bg-white p-2 rounded-2xl shadow-xl border border-slate-100 overflow-x-auto no-scrollbar">
+                <div className="flex flex-row bg-white p-1.5 md:p-2 rounded-2xl shadow-xl border border-slate-100 w-full md:w-auto overflow-x-auto no-scrollbar">
                   <button 
                     onClick={() => setActiveAlertaSubTab('registro')}
-                    className={`px-6 py-3 rounded-xl font-black uppercase tracking-widest text-[10px] transition-all whitespace-nowrap ${activeAlertaSubTab === 'registro' ? 'bg-red-600 text-white shadow-lg' : 'bg-white text-slate-400 border border-slate-200 hover:border-red-200'}`}
+                    className={`flex-1 md:flex-none px-4 md:px-6 py-2.5 md:py-3 rounded-xl font-black uppercase tracking-widest text-[9px] md:text-[10px] transition-all whitespace-nowrap ${activeAlertaSubTab === 'registro' ? 'bg-red-600 text-white shadow-lg' : 'bg-white text-slate-400 border border-slate-200 hover:border-red-200'}`}
                   >
                     Registrar Incidencia
                   </button>
                   <button 
                     onClick={() => setActiveAlertaSubTab('historial')}
-                    className={`px-6 py-3 rounded-xl font-black uppercase tracking-widest text-[10px] transition-all whitespace-nowrap ${activeAlertaSubTab === 'historial' ? 'bg-red-600 text-white shadow-lg' : 'bg-white text-slate-400 border border-slate-200 hover:border-red-200'}`}
+                    className={`flex-1 md:flex-none px-4 md:px-6 py-2.5 md:py-3 rounded-xl font-black uppercase tracking-widest text-[9px] md:text-[10px] transition-all whitespace-nowrap ${activeAlertaSubTab === 'historial' ? 'bg-red-600 text-white shadow-lg' : 'bg-white text-slate-400 border border-slate-200 hover:border-red-200'}`}
                   >
                     Historial
                   </button>
@@ -2572,15 +2595,15 @@ const App = () => {
               </header>
 
               {activeAlertaSubTab === 'registro' && (
-                <div className="bg-white p-4 md:p-8 rounded-3xl md:rounded-[3.5rem] shadow-2xl border border-slate-200 space-y-8">
-                  <div className="space-y-4">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Buscar Alumno (DNI, Nombre o Grado)</label>
+                <div className="bg-white p-4 md:p-8 rounded-2xl md:rounded-[3.5rem] shadow-2xl border border-slate-200 space-y-6 md:space-y-8">
+                  <div className="space-y-3 md:space-y-4">
+                    <label className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Buscar Alumno (DNI, Nombre o Grado)</label>
                     <div className="relative">
                       <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
                       <input 
                         type="text" 
                         placeholder="Buscar..." 
-                        className="w-full pl-12 pr-4 py-4 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-red-500 font-black text-lg outline-none transition-all"
+                        className="w-full pl-12 pr-4 py-3.5 md:py-4 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-red-500 font-black text-base md:text-lg outline-none transition-all"
                         value={personalSearchTerm}
                         onChange={(e) => setPersonalSearchTerm(e.target.value)}
                       />
@@ -2616,56 +2639,56 @@ const App = () => {
                   )}
 
                   {selectedPersonalStudent && (
-                    <div className="animate-fade-in space-y-8">
-                      <div className="flex flex-col md:flex-row gap-8 p-8 bg-slate-50 rounded-[2.5rem] border-2 border-slate-100 relative">
-                        <button onClick={() => setSelectedPersonalStudent(null)} className="absolute top-6 right-6 p-2 hover:bg-white rounded-full transition-all text-slate-400"><X size={20} /></button>
-                        <div className="w-32 h-32 rounded-[2rem] bg-white shadow-xl border-4 border-white overflow-hidden flex-shrink-0">
-                          {selectedPersonalStudent.foto ? <img src={selectedPersonalStudent.foto} className="w-full h-full object-cover" /> : <User className="w-full h-full p-6 text-slate-200" />}
+                    <div className="animate-fade-in space-y-6 md:space-y-8">
+                      <div className="flex flex-col md:flex-row gap-6 md:gap-8 p-6 md:p-8 bg-slate-50 rounded-2xl md:rounded-[2.5rem] border-2 border-slate-100 relative">
+                        <button onClick={() => setSelectedPersonalStudent(null)} className="absolute top-4 right-4 md:top-6 md:right-6 p-2 hover:bg-white rounded-full transition-all text-slate-400"><X size={20} /></button>
+                        <div className="w-24 h-24 md:w-32 md:h-32 rounded-2xl md:rounded-[2rem] bg-white shadow-xl border-4 border-white overflow-hidden flex-shrink-0 mx-auto md:mx-0">
+                          {selectedPersonalStudent.foto ? <img src={selectedPersonalStudent.foto} className="w-full h-full object-cover" /> : <User className="w-full h-full p-4 md:p-6 text-slate-200" />}
                         </div>
-                        <div className="space-y-4 flex-1">
+                        <div className="space-y-4 flex-1 text-center md:text-left">
                           <div>
-                            <h3 className="text-2xl font-black text-slate-800 uppercase tracking-tight">{selectedPersonalStudent.nombre} {selectedPersonalStudent.apellido}</h3>
-                            <p className="text-red-600 font-black text-[10px] uppercase tracking-widest mt-1">Ficha del Estudiante</p>
+                            <h3 className="text-xl md:text-2xl font-black text-slate-800 uppercase tracking-tight">{selectedPersonalStudent.nombre} {selectedPersonalStudent.apellido}</h3>
+                            <p className="text-red-600 font-black text-[9px] md:text-[10px] uppercase tracking-widest mt-1">Ficha del Estudiante</p>
                           </div>
-                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                            <div>
-                              <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">DNI</p>
-                              <p className="font-bold text-slate-700 text-sm">{selectedPersonalStudent.dni}</p>
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 md:gap-4">
+                            <div className="bg-white p-2 rounded-xl border border-slate-100">
+                              <p className="text-[7px] md:text-[8px] font-black text-slate-400 uppercase tracking-widest">DNI</p>
+                              <p className="font-bold text-slate-700 text-xs md:text-sm">{selectedPersonalStudent.dni}</p>
                             </div>
-                            <div>
-                              <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Nivel</p>
-                              <p className="font-bold text-slate-700 text-sm">{selectedPersonalStudent.nivel}</p>
+                            <div className="bg-white p-2 rounded-xl border border-slate-100">
+                              <p className="text-[7px] md:text-[8px] font-black text-slate-400 uppercase tracking-widest">Nivel</p>
+                              <p className="font-bold text-slate-700 text-xs md:text-sm">{selectedPersonalStudent.nivel}</p>
                             </div>
-                            <div>
-                              <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Grado</p>
-                              <p className="font-bold text-slate-700 text-sm">{selectedPersonalStudent.grado}</p>
+                            <div className="bg-white p-2 rounded-xl border border-slate-100">
+                              <p className="text-[7px] md:text-[8px] font-black text-slate-400 uppercase tracking-widest">Grado</p>
+                              <p className="font-bold text-slate-700 text-xs md:text-sm">{selectedPersonalStudent.grado}</p>
                             </div>
-                            <div>
-                              <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Puntaje Conducta</p>
-                              <div className="flex items-center gap-2">
-                                <span className={`font-black text-sm ${
+                            <div className="bg-white p-2 rounded-xl border border-slate-100">
+                              <p className="text-[7px] md:text-[8px] font-black text-slate-400 uppercase tracking-widest">Puntaje</p>
+                              <div className="flex items-center justify-center md:justify-start gap-1">
+                                <span className={`font-black text-xs md:text-sm ${
                                   (selectedPersonalStudent.conductPoints || 100) >= 80 ? 'text-emerald-600' :
                                   (selectedPersonalStudent.conductPoints || 100) >= 60 ? 'text-amber-600' :
                                   'text-rose-600'
                                 }`}>
-                                  {((selectedPersonalStudent.conductPoints || 100) / 100 * 20).toFixed(1)}/20
+                                  {((selectedPersonalStudent.conductPoints || 100) / 100 * 20).toFixed(1)}
                                 </span>
-                                <span className="text-[10px] text-slate-400">({selectedPersonalStudent.conductPoints || 100} pts)</span>
+                                <span className="text-[8px] text-slate-400">({selectedPersonalStudent.conductPoints || 100})</span>
                               </div>
                             </div>
                           </div>
-                          <div className="flex gap-4 pt-4">
+                          <div className="flex gap-3 md:gap-4 pt-2 md:pt-4">
                             <button 
                               onClick={() => setIsMeritModalOpen(true)}
-                              className="flex-1 bg-emerald-600 text-white py-3 rounded-xl font-black uppercase tracking-widest text-[10px] shadow-lg hover:bg-emerald-700 transition-all flex items-center justify-center gap-2"
+                              className="flex-1 bg-emerald-600 text-white py-2.5 md:py-3 rounded-xl font-black uppercase tracking-widest text-[9px] md:text-[10px] shadow-lg hover:bg-emerald-700 transition-all flex items-center justify-center gap-2"
                             >
-                              <Award size={16} /> Mérito
+                              <Award size={14} md:size={16} /> Mérito
                             </button>
                             <button 
                               onClick={() => setIsDemeritModalOpen(true)}
-                              className="flex-1 bg-rose-600 text-white py-3 rounded-xl font-black uppercase tracking-widest text-[10px] shadow-lg hover:bg-rose-700 transition-all flex items-center justify-center gap-2"
+                              className="flex-1 bg-rose-600 text-white py-2.5 md:py-3 rounded-xl font-black uppercase tracking-widest text-[9px] md:text-[10px] shadow-lg hover:bg-rose-700 transition-all flex items-center justify-center gap-2"
                             >
-                              <AlertCircle size={16} /> Demérito
+                              <AlertCircle size={14} md:size={16} /> Demérito
                             </button>
                           </div>
                         </div>
@@ -2690,11 +2713,11 @@ const App = () => {
                         setIncidences([newIncidence, ...incidences]);
                         setSelectedPersonalStudent(null);
                         setToast({ message: "Incidencia registrada correctamente.", type: 'success' });
-                      }} className="space-y-6">
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      }} className="space-y-4 md:space-y-6">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
                           <div className="space-y-2">
-                            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Tipo de Incidencia</label>
-                            <select name="type" required className="w-full p-4 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-red-500 font-bold text-slate-700 outline-none transition-all">
+                            <label className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Tipo de Incidencia</label>
+                            <select name="type" required className="w-full p-3.5 md:p-4 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-red-500 font-bold text-slate-700 outline-none transition-all text-sm md:text-base">
                               <option value="">Seleccione tipo...</option>
                               {incidenceTypes.map(type => (
                                 <option key={type.id} value={type.name}>{type.name}</option>
@@ -2702,12 +2725,12 @@ const App = () => {
                             </select>
                           </div>
                           <div className="space-y-2">
-                            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Nivel de Gravedad</label>
-                            <div className="flex flex-col sm:flex-row gap-2">
+                            <label className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Nivel de Gravedad</label>
+                            <div className="flex flex-row gap-2">
                               {['leve', 'moderado', 'grave'].map((sev) => (
                                 <label key={sev} className="flex-1">
                                   <input type="radio" name="severity" value={sev} required className="hidden peer" />
-                                  <div className={`text-center p-3 sm:p-4 rounded-2xl border-2 border-slate-100 cursor-pointer font-black text-[10px] uppercase tracking-widest transition-all peer-checked:bg-red-600 peer-checked:text-white peer-checked:border-red-600 hover:bg-slate-50`}>
+                                  <div className={`text-center p-3 md:p-4 rounded-2xl border-2 border-slate-100 cursor-pointer font-black text-[9px] md:text-[10px] uppercase tracking-widest transition-all peer-checked:bg-red-600 peer-checked:text-white peer-checked:border-red-600 hover:bg-slate-50`}>
                                     {sev}
                                   </div>
                                 </label>
@@ -2716,10 +2739,10 @@ const App = () => {
                           </div>
                         </div>
                         <div className="space-y-2">
-                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Descripción de la Incidencia</label>
-                          <textarea name="description" required rows={4} placeholder="Detalle lo sucedido..." className="w-full p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-red-500 font-bold text-slate-700 outline-none transition-all resize-none" />
+                          <label className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Descripción de la Incidencia</label>
+                          <textarea name="description" required rows={3} md:rows={4} placeholder="Detalle lo sucedido..." className="w-full p-4 md:p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-red-500 font-bold text-slate-700 outline-none transition-all resize-none text-sm md:text-base" />
                         </div>
-                        <button type="submit" className="w-full py-5 bg-red-600 text-white rounded-2xl font-black uppercase tracking-widest text-xs shadow-xl hover:bg-red-700 transition-all">Registrar Alerta</button>
+                        <button type="submit" className="w-full py-4 md:py-5 bg-red-600 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] md:text-xs shadow-xl hover:bg-red-700 transition-all">Registrar Alerta</button>
                       </form>
                     </div>
                   )}
@@ -3531,12 +3554,7 @@ const App = () => {
                                  <div className="text-right bg-white/10 p-4 rounded-3xl backdrop-blur-md border border-white/10">
                                    <p className="text-[8px] font-black uppercase tracking-widest opacity-60 mb-1">Nota Comportamiento</p>
                                    <p className="text-2xl font-black">
-                                     {(() => {
-                                       const studentActions = conductActions.filter(a => a.studentId === selectedBoletaStudent.id);
-                                       const baseScore = 20;
-                                       const totalPoints = studentActions.reduce((acc, curr) => acc + curr.points, baseScore);
-                                       return Math.max(0, Math.min(20, totalPoints)).toFixed(2);
-                                     })()}
+                                     {((selectedBoletaStudent.conductPoints || 100) / 5).toFixed(2)}
                                    </p>
                                  </div>
                                </div>
@@ -3871,34 +3889,34 @@ const App = () => {
               )}
 
               {activePanelSubTab === 'grados' && (
-                <div className="space-y-8">
-                  <div className="flex justify-between items-center">
-                    <h3 className="text-2xl font-black text-slate-800 uppercase tracking-tighter">Gestión de Niveles y Grados</h3>
-                    <div className="flex bg-slate-100 p-1 rounded-xl">
+                <div className="space-y-6 md:space-y-8">
+                  <div className="flex flex-col md:flex-row justify-between items-center gap-4 md:gap-6">
+                    <h3 className="text-xl md:text-2xl font-black text-slate-800 uppercase tracking-tighter text-center md:text-left">Gestión de Niveles y Grados</h3>
+                    <div className="flex bg-slate-100 p-1 rounded-xl w-full md:w-auto justify-center">
                       <button 
                         onClick={() => setActiveGradosSubTab('niveles')}
-                        className={`px-6 py-3 rounded-lg font-black text-[10px] uppercase tracking-widest transition-all ${activeGradosSubTab === 'niveles' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400'}`}
+                        className={`flex-1 md:flex-none px-4 md:px-6 py-2.5 md:py-3 rounded-lg font-black text-[9px] md:text-[10px] uppercase tracking-widest transition-all ${activeGradosSubTab === 'niveles' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400'}`}
                       >Niveles</button>
                       <button 
                         onClick={() => setActiveGradosSubTab('grados')}
-                        className={`px-6 py-3 rounded-lg font-black text-[10px] uppercase tracking-widest transition-all ${activeGradosSubTab === 'grados' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400'}`}
+                        className={`flex-1 md:flex-none px-4 md:px-6 py-2.5 md:py-3 rounded-lg font-black text-[9px] md:text-[10px] uppercase tracking-widest transition-all ${activeGradosSubTab === 'grados' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400'}`}
                       >Grados</button>
                       <button 
                         onClick={() => setActiveGradosSubTab('secciones')}
-                        className={`px-6 py-3 rounded-lg font-black text-[10px] uppercase tracking-widest transition-all ${activeGradosSubTab === 'secciones' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400'}`}
+                        className={`flex-1 md:flex-none px-4 md:px-6 py-2.5 md:py-3 rounded-lg font-black text-[9px] md:text-[10px] uppercase tracking-widest transition-all ${activeGradosSubTab === 'secciones' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400'}`}
                       >Secciones</button>
                     </div>
                   </div>
 
                   {activeGradosSubTab === 'niveles' && (
                     <div className="space-y-6">
-                      <div className="flex justify-end">
+                      <div className="flex justify-center md:justify-end">
                         <button 
                           onClick={() => {
                             setEditingLevel(null);
                             setPanelModalType('level');
                           }}
-                          className="bg-blue-600 text-white px-8 py-4 rounded-2xl font-black flex items-center gap-3 hover:bg-blue-700 transition-all shadow-xl uppercase text-xs tracking-widest"
+                          className="w-full md:w-auto bg-blue-600 text-white px-8 py-4 rounded-2xl font-black flex items-center justify-center gap-3 hover:bg-blue-700 transition-all shadow-xl uppercase text-xs tracking-widest"
                         >
                           <Plus size={20} /> NUEVO NIVEL
                         </button>
@@ -4735,19 +4753,19 @@ const App = () => {
                           </div>
 
                           {/* Main: Schedule Grid */}
-                          <div className="lg:col-span-3 bg-white p-6 md:p-10 rounded-[2.5rem] shadow-2xl border border-slate-100 overflow-x-auto no-scrollbar">
-                            <div className="min-w-[800px]">
+                          <div className="lg:col-span-3 bg-white p-4 md:p-10 rounded-[2.5rem] shadow-2xl border border-slate-100 overflow-x-auto custom-scrollbar">
+                            <div className="min-w-[1000px]">
                               <div className={`grid gap-2 mb-4`} style={{ gridTemplateColumns: `repeat(${schoolDays.length + 1}, 1fr)` }}>
                                 <div className="p-2"></div>
                                 {schoolDays.map(dia => (
-                                  <div key={dia} className="text-center font-black text-[10px] uppercase tracking-widest text-slate-400">{dia}</div>
+                                  <div key={dia} className="text-center font-black text-[10px] uppercase tracking-widest text-slate-400 py-2 bg-slate-50 rounded-xl">{dia}</div>
                                 ))}
                               </div>
                               <div className="space-y-2">
                                 {timeSlots.map(slot => (
                                   <div key={slot.id} className={`grid gap-2`} style={{ gridTemplateColumns: `repeat(${schoolDays.length + 1}, 1fr)` }}>
-                                    <div className="flex items-center justify-center bg-slate-50 rounded-xl p-2">
-                                      <span className="font-black text-[10px] text-slate-400">{slot.start}</span>
+                                    <div className="flex items-center justify-center bg-slate-900 text-white rounded-xl p-3 shadow-md">
+                                      <span className="font-black text-[10px] tracking-tighter">{slot.start}</span>
                                     </div>
                                     {schoolDays.map(dia => {
                                       const targetId = scheduleGradeFilter;
@@ -4799,29 +4817,40 @@ const App = () => {
                                               setDraggedCourse(null);
                                               setDraggedSchedule(null);
                                               setToast({ message: "Horario actualizado", type: 'success' });
+                                            } else if (!targetId) {
+                                              setToast({ message: "Selecciona un grado primero", type: 'error' });
                                             }
                                           }}
-                                          className={`min-h-[60px] rounded-xl border-2 border-dashed transition-all flex items-center justify-center p-2 relative group ${sch ? 'border-transparent' : 'border-slate-100 hover:border-blue-200 hover:bg-blue-50/30'}`}
+                                          className={`min-h-[80px] rounded-2xl border-2 border-dashed transition-all flex items-center justify-center p-2 relative group ${sch ? 'border-transparent shadow-sm' : 'border-slate-100 hover:border-blue-400 hover:bg-blue-50/50'}`}
                                         >
                                           {sch ? (
                                             <div 
                                               draggable
                                               onDragStart={() => setDraggedSchedule(sch)}
-                                              className="w-full h-full rounded-lg flex flex-col items-center justify-center text-center p-1 shadow-sm border cursor-move"
+                                              className="w-full h-full rounded-xl flex flex-col items-center justify-center text-center p-2 shadow-sm border cursor-move relative transition-transform hover:scale-[1.02]"
                                               style={{ 
-                                                backgroundColor: courses.find(c => c.name === sch.materia)?.color + '15' || '#f1f5f9',
-                                                borderColor: courses.find(c => c.name === sch.materia)?.color + '30' || '#e2e8f0',
-                                                color: courses.find(c => c.name === sch.materia)?.color || '#64748b'
+                                                backgroundColor: (courses.find(c => c.name === sch.materia)?.color || '#3b82f6') + '15',
+                                                borderColor: (courses.find(c => c.name === sch.materia)?.color || '#3b82f6') + '40',
+                                                color: courses.find(c => c.name === sch.materia)?.color || '#1e293b'
                                               }}
                                             >
-                                              <span className="font-black text-[8px] uppercase leading-tight">{sch.materia}</span>
+                                              <span className="font-black text-[9px] uppercase leading-tight mb-1">{sch.materia}</span>
+                                              <div className="flex items-center gap-1 opacity-60">
+                                                <GraduationCap size={8} />
+                                                <span className="text-[7px] font-bold uppercase">
+                                                  {students.find(s => s.id === courses.find(c => c.name === sch.materia)?.teacherId)?.nombre || 'S.D.'}
+                                                </span>
+                                              </div>
                                               <button 
                                                 onClick={() => setSchedules(schedules.filter(s => s.id !== sch.id))}
-                                                className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 p-1 bg-white rounded-full shadow-md text-red-500 hover:scale-110 transition-all"
-                                              ><X size={10} /></button>
+                                                className="absolute -top-2 -right-2 opacity-0 group-hover:opacity-100 p-1.5 bg-white rounded-full shadow-lg text-red-500 hover:scale-110 transition-all border border-slate-100"
+                                              ><X size={12} /></button>
                                             </div>
                                           ) : (
-                                            <Plus size={14} className="text-slate-200 group-hover:text-blue-300" />
+                                            <div className="flex flex-col items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                                              <Plus size={16} className="text-blue-400" />
+                                              <span className="text-[7px] font-black text-blue-400 uppercase">Asignar</span>
+                                            </div>
                                           )}
                                         </div>
                                       );

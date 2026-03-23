@@ -62,7 +62,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         {stats.map((stat, i) => (
           <div key={i} className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100 flex items-center gap-6 hover:shadow-xl transition-all group">
-            <div className={`w-16 h-16 rounded-2xl flex items-center justify-center group-hover:scale-110 transition-transform`} style={{ backgroundColor: `${activeConfig.theme.primaryColor}15`, color: activeConfig.theme.primaryColor }}>
+            <div className={`w-16 h-16 rounded-2xl flex items-center justify-center group-hover:scale-110 transition-transform`} style={{ backgroundColor: 'var(--primary-color-15)', color: 'var(--primary-color)' }}>
               <stat.icon size={32} />
             </div>
             <div>
@@ -75,24 +75,24 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Main Chart */}
-        <div className="lg:col-span-2 bg-white p-10 rounded-[3rem] shadow-xl border border-slate-100">
+        <div className="lg:col-span-2 bg-white p-6 md:p-10 rounded-[3rem] shadow-xl border border-slate-100">
           <div className="flex justify-between items-center mb-10">
             <div>
               <h3 className="text-2xl font-black text-slate-900 uppercase tracking-tight">Asistencia Semanal</h3>
               <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">Últimos 7 días de actividad</p>
             </div>
           </div>
-          <div className="h-[400px]">
+          <div className="h-[300px] md:h-[400px]">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
                 <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 10, fontWeight: 800, fill: '#94a3b8' }} dy={10} />
                 <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fontWeight: 800, fill: '#94a3b8' }} />
                 <Tooltip 
-                  cursor={{ fill: '#f8fafc' }}
-                  contentStyle={{ borderRadius: '20px', border: 'none', boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.1)', padding: '15px' }}
+                   cursor={{ fill: '#f8fafc' }}
+                   contentStyle={{ borderRadius: '20px', border: 'none', boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.1)', padding: '15px' }}
                 />
-                <Bar dataKey="asistencias" fill={activeConfig.theme.primaryColor} radius={[10, 10, 10, 10]} barSize={40} />
+                <Bar dataKey="asistencias" fill="var(--primary-color)" radius={[10, 10, 10, 10]} barSize={40} />
               </BarChart>
             </ResponsiveContainer>
           </div>
