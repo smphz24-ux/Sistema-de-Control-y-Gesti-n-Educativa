@@ -2,6 +2,6 @@
   "requestFramePermissions": [
     "camera"
   ],
-  "name": "Sistema de Control y Gestión Educativa",
+  "name": "26 Control Educativa",
   "description": "Sistema de gestión escolar inteligente con control de asistencia por QR y análisis de datos con IA."
 }
