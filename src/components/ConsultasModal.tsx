@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useCallback } from 'react';
-import { X, User, Download, Calendar, FileText, ShieldCheck, Award, Info } from 'lucide-react';
+import { X, User, Download, Calendar, FileText, ShieldCheck, Award, Info, Printer } from 'lucide-react';
 import { Student, UserConfig, Attendance, Course, Schedule, TimeSlot, ConsultationLog, ConductAction, Grade } from '../types';
 import * as htmlToImage from 'html-to-image';
 
@@ -24,12 +24,22 @@ const ConsultasModal: React.FC<ConsultasModalProps> = ({
   onClose, attendance, courses, schedules, timeSlots, pub, conductActions, grades
 }) => {
   const [selectedCourseId, setSelectedCourseId] = useState<string | null>(null);
+  const [isFullScreen, setIsFullScreen] = useState(false);
   const scheduleRef = useRef<HTMLDivElement>(null);
 
   const downloadSchedule = useCallback(async () => {
     if (scheduleRef.current) {
       try {
-        const dataUrl = await htmlToImage.toJpeg(scheduleRef.current, { quality: 0.95, backgroundColor: '#ffffff' });
+        // We capture the inner div which has the full width
+        const dataUrl = await htmlToImage.toJpeg(scheduleRef.current, { 
+          quality: 0.95, 
+          backgroundColor: '#ffffff',
+          style: {
+            borderRadius: '0',
+            padding: '40px',
+            width: '1000px' // Ensure full width is captured
+          }
+        });
         const link = document.createElement('a');
         link.download = `horario-${consultasResult.nombre}-${consultasResult.apellido}.jpg`;
         link.href = dataUrl;
@@ -40,77 +50,121 @@ const ConsultasModal: React.FC<ConsultasModalProps> = ({
     }
   }, [consultasResult]);
 
+  const printSchedule = () => {
+    const printContent = scheduleRef.current;
+    if (!printContent) return;
+    
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) return;
+    
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>Horario - ${consultasResult.nombre} ${consultasResult.apellido}</title>
+          <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+          <style>
+            @media print {
+              @page { size: landscape; margin: 1cm; }
+              body { -webkit-print-color-adjust: exact; }
+            }
+            body { font-family: sans-serif; padding: 20px; }
+            table { width: 100%; border-collapse: collapse; }
+            th, td { border: 1px solid #e2e8f0; padding: 8px; text-align: center; }
+            .bg-slate-900 { background-color: #0f172a !important; color: white !important; }
+            .rounded-xl { border-radius: 0.75rem; }
+          </style>
+        </head>
+        <body>
+          ${printContent.innerHTML}
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+    printWindow.focus();
+    setTimeout(() => {
+      printWindow.print();
+      printWindow.close();
+    }, 500);
+  };
+
+  // Derive days from schedules if not provided
+  const availableDays = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
+  const studentSchedules = (schedules || []).filter(s => s.targetId === consultasResult.gradoId || (s.gradeId === consultasResult.grado && s.section === consultasResult.seccion));
+  const activeDays = availableDays.filter(day => 
+    ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes'].includes(day) || 
+    studentSchedules.some(s => (s.dia || s.day) === day)
+  );
+
   const studentConductActions = conductActions.filter(a => a.studentId === consultasResult.id);
   const studentGrades = grades.filter(g => g.studentId === consultasResult.id);
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 md:p-10 bg-slate-950/90 backdrop-blur-xl animate-fade-in">
-      <div className="bg-white rounded-[3rem] shadow-2xl w-full max-w-5xl h-full max-h-[90vh] overflow-hidden flex flex-col animate-slide-up relative">
+    <div className={`fixed inset-0 z-[100] flex items-center justify-center p-2 md:p-10 bg-slate-950/90 backdrop-blur-xl animate-fade-in ${isFullScreen ? 'z-[200]' : ''}`}>
+      <div className={`bg-white rounded-[2rem] md:rounded-[3rem] shadow-2xl w-full max-w-5xl h-full max-h-[95vh] md:max-h-[90vh] overflow-hidden flex flex-col animate-slide-up relative ${isFullScreen ? 'max-w-full max-h-full rounded-none' : ''}`}>
         {/* Fixed Close Button */}
         <button 
-          onClick={onClose} 
-          className="absolute top-6 right-6 z-[110] bg-black/20 hover:bg-black/40 text-white p-3 rounded-full transition-all shadow-lg"
+          onClick={isFullScreen ? () => setIsFullScreen(false) : onClose} 
+          className="absolute top-4 right-4 md:top-6 md:right-6 z-[110] bg-black/20 hover:bg-black/40 text-white p-2 md:p-3 rounded-full transition-all shadow-lg"
         >
-          <X size={24} />
+          <X size={20} />
         </button>
 
         {/* Scrollable Container */}
-        <div className="flex-1 overflow-y-auto no-scrollbar bg-slate-50">
+        <div className={`flex-1 overflow-y-auto no-scrollbar bg-slate-50 ${isFullScreen ? 'overflow-hidden' : ''}`}>
           {/* Modal Header */}
-          <div className="p-8 md:p-12 border-b border-slate-100 flex flex-col md:flex-row justify-between items-center gap-8 text-white relative overflow-hidden" style={{ background: `linear-gradient(135deg, ${consultasResult.primaryColor || globalConfig.theme.primaryColor} 0%, ${consultasResult.secondaryColor || globalConfig.theme.secondaryColor} 100%)` }}>
-            <div className="absolute top-0 right-0 w-96 h-96 bg-white/10 rounded-full -mr-48 -mt-48 blur-3xl"></div>
-            <div className="flex flex-col sm:flex-row items-center gap-6 relative z-10 w-full md:w-auto text-center sm:text-left">
-              <div className="w-24 h-24 rounded-3xl bg-white/10 p-1 border border-white/20 mx-auto sm:mx-0 shadow-2xl">
-                <div className="w-full h-full rounded-2xl bg-slate-800 flex items-center justify-center overflow-hidden">
-                  {consultasResult.foto ? (
-                    <img src={consultasResult.foto} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                  ) : consultasResult.logo ? (
-                    <img src={consultasResult.logo} className="w-full h-full object-contain p-2 opacity-50" referrerPolicy="no-referrer" />
-                  ) : (
-                    <User size={40} className="text-slate-500" />
+          {!isFullScreen && (
+            <div className="p-6 md:p-12 border-b border-slate-100 flex flex-col md:flex-row justify-between items-center gap-6 md:gap-8 text-white relative overflow-hidden" style={{ background: `linear-gradient(135deg, ${consultasResult.primaryColor || globalConfig.theme.primaryColor} 0%, ${consultasResult.secondaryColor || globalConfig.theme.secondaryColor} 100%)` }}>
+              <div className="absolute top-0 right-0 w-96 h-96 bg-white/10 rounded-full -mr-48 -mt-48 blur-3xl"></div>
+              <div className="flex flex-col sm:flex-row items-center gap-4 md:gap-6 relative z-10 w-full md:w-auto text-center sm:text-left">
+                <div className="w-20 h-20 md:w-24 md:h-24 rounded-2xl md:rounded-3xl bg-white/10 p-1 border border-white/20 mx-auto sm:mx-0 shadow-2xl">
+                  <div className="w-full h-full rounded-xl md:rounded-2xl bg-slate-800 flex items-center justify-center overflow-hidden">
+                    {consultasResult.foto ? (
+                      <img src={consultasResult.foto} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                    ) : (
+                      <User size={32} className="text-slate-500" />
+                    )}
+                  </div>
+                </div>
+                <div>
+                  <h2 className="text-xl md:text-4xl font-black uppercase tracking-tight leading-tight mb-2">{consultasResult.nombre} {consultasResult.apellido}</h2>
+                  <div className="flex flex-wrap justify-center sm:justify-start gap-2 md:gap-3">
+                    <span className="bg-white/20 px-2 md:px-3 py-1 rounded-lg text-[8px] md:text-[10px] font-black uppercase tracking-widest border border-white/10">DNI: {consultasResult.dni}</span>
+                    <span className="bg-white/20 px-2 md:px-3 py-1 rounded-lg text-[8px] md:text-[10px] font-black uppercase tracking-widest border border-white/10">{consultasResult.grado} "{consultasResult.seccion}"</span>
+                  </div>
+                </div>
+              </div>
+              {consultasResult?.rol !== 'Docente' && (
+                <div className="flex bg-white/10 p-1 rounded-lg border border-white/10 overflow-x-auto no-scrollbar relative z-10 w-full md:w-auto justify-start md:justify-center shadow-xl gap-1">
+                  {pub.attendance && (
+                    <button 
+                      onClick={() => setActiveConsultasTab('asistencia')}
+                      className={`flex-1 md:flex-none px-3 md:px-6 py-2 md:py-4 rounded-md md:rounded-xl font-black text-[8px] md:text-[10px] uppercase tracking-widest transition-all whitespace-nowrap ${activeConsultasTab === 'asistencia' ? 'bg-white text-slate-900 shadow-xl scale-105' : 'text-white/60 hover:text-white'}`}
+                    >Asistencia</button>
+                  )}
+                  {pub.alerts && (
+                    <button 
+                      onClick={() => setActiveConsultasTab('alerta')}
+                      className={`flex-1 md:flex-none px-3 md:px-6 py-2 md:py-4 rounded-md md:rounded-xl font-black text-[8px] md:text-[10px] uppercase tracking-widest transition-all whitespace-nowrap ${activeConsultasTab === 'alerta' ? 'bg-white text-slate-900 shadow-xl scale-105' : 'text-white/60 hover:text-white'}`}
+                    >Alertas</button>
+                  )}
+                  {pub.schedule && (
+                    <button 
+                      onClick={() => setActiveConsultasTab('horario')}
+                      className={`flex-1 md:flex-none px-3 md:px-6 py-2 md:py-4 rounded-md md:rounded-xl font-black text-[8px] md:text-[10px] uppercase tracking-widest transition-all whitespace-nowrap ${activeConsultasTab === 'horario' ? 'bg-white text-slate-900 shadow-xl scale-105' : 'text-white/60 hover:text-white'}`}
+                    >Horario</button>
+                  )}
+                  {pub.grades && (
+                    <button 
+                      onClick={() => setActiveConsultasTab('notas')}
+                      className={`flex-1 md:flex-none px-3 md:px-6 py-2 md:py-4 rounded-md md:rounded-xl font-black text-[8px] md:text-[10px] uppercase tracking-widest transition-all whitespace-nowrap ${activeConsultasTab === 'notas' ? 'bg-white text-slate-900 shadow-xl scale-105' : 'text-white/60 hover:text-white'}`}
+                    >Notas</button>
                   )}
                 </div>
-              </div>
-              <div>
-                <h2 className="text-2xl md:text-4xl font-black uppercase tracking-tight leading-none mb-2">{consultasResult.nombre} {consultasResult.apellido}</h2>
-                <div className="flex flex-wrap justify-center sm:justify-start gap-3">
-                  <span className="bg-white/20 px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest border border-white/10">DNI: {consultasResult.dni}</span>
-                  <span className="bg-white/20 px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest border border-white/10">{consultasResult.grado} "{consultasResult.seccion}"</span>
-                  {consultasResult.siteName && <span className="bg-white/10 px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest border border-white/5">{consultasResult.siteName}</span>}
-                </div>
-              </div>
+              )}
             </div>
-            {consultasResult?.rol !== 'Docente' && (
-              <div className="flex bg-white/10 p-2 rounded-2xl border border-white/10 overflow-x-auto no-scrollbar relative z-10 w-full md:w-auto justify-center shadow-xl">
-                {pub.attendance && (
-                  <button 
-                    onClick={() => setActiveConsultasTab('asistencia')}
-                    className={`flex-1 md:flex-none px-6 py-4 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all whitespace-nowrap ${activeConsultasTab === 'asistencia' ? 'bg-white text-slate-900 shadow-xl scale-105' : 'text-white/60 hover:text-white'}`}
-                  >Asistencia</button>
-                )}
-                {pub.alerts && (
-                  <button 
-                    onClick={() => setActiveConsultasTab('alerta')}
-                    className={`flex-1 md:flex-none px-6 py-4 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all whitespace-nowrap ${activeConsultasTab === 'alerta' ? 'bg-white text-slate-900 shadow-xl scale-105' : 'text-white/60 hover:text-white'}`}
-                  >Alertas</button>
-                )}
-                {pub.schedule && (
-                  <button 
-                    onClick={() => setActiveConsultasTab('horario')}
-                    className={`flex-1 md:flex-none px-6 py-4 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all whitespace-nowrap ${activeConsultasTab === 'horario' ? 'bg-white text-slate-900 shadow-xl scale-105' : 'text-white/60 hover:text-white'}`}
-                  >Horario</button>
-                )}
-                {pub.grades && (
-                  <button 
-                    onClick={() => setActiveConsultasTab('notas')}
-                    className={`flex-1 md:flex-none px-6 py-4 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all whitespace-nowrap ${activeConsultasTab === 'notas' ? 'bg-white text-slate-900 shadow-xl scale-105' : 'text-white/60 hover:text-white'}`}
-                  >Notas</button>
-                )}
-              </div>
-            )}
-          </div>
+          )}
 
           {/* Modal Content */}
-          <div className="p-8 md:p-12">
+          <div className={`${isFullScreen ? 'p-0 h-full' : 'p-6 md:p-12'}`}>
             {activeConsultasTab === 'asistencia' && (
               <div className="space-y-6">
                 <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">Registro de Asistencia</h3>
@@ -152,13 +206,13 @@ const ConsultasModal: React.FC<ConsultasModalProps> = ({
                 </div>
 
                 <div className="space-y-4">
-                  <div className="bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-xl flex flex-col md:flex-row justify-between items-center gap-8">
+                  <div className="bg-white p-6 md:p-8 rounded-2xl md:rounded-[2.5rem] border border-slate-100 shadow-xl flex flex-col md:flex-row justify-between items-center gap-6 md:gap-8">
                     <div className="flex-1 w-full">
                       <div className="flex justify-between items-center mb-4">
-                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Puntaje de Conducta</span>
+                        <span className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest">Puntaje de Conducta</span>
                         <div className="text-right">
-                          <span className="text-2xl font-black text-slate-900 uppercase">{(consultasResult.conductPoints || 100) / 5} / 20</span>
-                          <p className={`text-[8px] font-black uppercase tracking-widest mt-1 ${
+                          <span className="text-xl md:text-2xl font-black text-slate-900 uppercase">{(consultasResult.conductPoints || 100) / 5} / 20</span>
+                          <p className={`text-[7px] md:text-[8px] font-black uppercase tracking-widest mt-1 ${
                             (consultasResult.conductPoints || 100) > 70 ? 'text-emerald-600' : 
                             (consultasResult.conductPoints || 100) > 40 ? 'text-amber-600' : 'text-rose-600'
                           }`}>
@@ -167,7 +221,7 @@ const ConsultasModal: React.FC<ConsultasModalProps> = ({
                           </p>
                         </div>
                       </div>
-                      <div className="w-full bg-slate-100 h-4 rounded-full overflow-hidden shadow-inner">
+                      <div className="w-full bg-slate-100 h-3 md:h-4 rounded-full overflow-hidden shadow-inner">
                         <div 
                           className="h-full transition-all duration-1000 ease-out" 
                           style={{ 
@@ -177,9 +231,9 @@ const ConsultasModal: React.FC<ConsultasModalProps> = ({
                         />
                       </div>
                     </div>
-                    <div className="bg-slate-50 p-6 rounded-3xl border border-slate-100 text-center min-w-[140px]">
-                      <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Estado</p>
-                      <p className={`text-sm font-black uppercase ${(consultasResult.conductPoints || 100) > 70 ? 'text-emerald-600' : (consultasResult.conductPoints || 100) > 40 ? 'text-amber-600' : 'text-rose-600'}`}>
+                    <div className="bg-slate-50 p-4 md:p-6 rounded-2xl md:rounded-3xl border border-slate-100 text-center min-w-[120px] md:min-w-[140px] w-full md:w-auto">
+                      <p className="text-[8px] md:text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Estado</p>
+                      <p className={`text-xs md:text-sm font-black uppercase ${(consultasResult.conductPoints || 100) > 70 ? 'text-emerald-600' : (consultasResult.conductPoints || 100) > 40 ? 'text-amber-600' : 'text-rose-600'}`}>
                         {(consultasResult.conductPoints || 100) > 70 ? 'Excelente' : (consultasResult.conductPoints || 100) > 40 ? 'Regular' : 'Crítico'}
                       </p>
                     </div>
@@ -220,57 +274,85 @@ const ConsultasModal: React.FC<ConsultasModalProps> = ({
             )}
 
             {activeConsultasTab === 'horario' && (
-              <div className="space-y-6">
-                <div className="flex justify-between items-center">
-                  <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">Horario de Clases</h3>
-                  <button 
-                    onClick={downloadSchedule}
-                    className="bg-slate-900 text-white px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center gap-2 hover:bg-slate-800 transition-all shadow-lg"
-                  >
-                    <Download size={14} /> Descargar Horario
-                  </button>
+              <div className={`space-y-6 ${isFullScreen ? 'h-full flex flex-col' : ''}`}>
+                <div className="flex flex-col md:flex-row justify-between items-center gap-4 md:gap-6">
+                  <h3 className="text-lg md:text-xl font-black text-slate-800 uppercase tracking-tight">Horario de Clases</h3>
+                  <div className="flex gap-2 w-full md:w-auto">
+                    <button 
+                      onClick={() => setIsFullScreen(!isFullScreen)}
+                      className="flex-1 md:flex-none bg-blue-600 text-white px-4 py-3 md:py-2 rounded-xl font-black text-[9px] md:text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-blue-700 transition-all shadow-lg"
+                    >
+                      <Calendar size={14} /> {isFullScreen ? 'Salir Pantalla Completa' : 'Pantalla Completa'}
+                    </button>
+                    <button 
+                      onClick={printSchedule}
+                      className="flex-1 md:flex-none bg-slate-100 text-slate-600 px-4 py-3 md:py-2 rounded-xl font-black text-[9px] md:text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-slate-200 transition-all shadow-sm"
+                    >
+                      <Printer size={14} /> Imprimir
+                    </button>
+                    <button 
+                      onClick={downloadSchedule}
+                      className="flex-1 md:flex-none bg-slate-900 text-white px-4 py-3 md:py-2 rounded-xl font-black text-[9px] md:text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-slate-800 transition-all shadow-lg"
+                    >
+                      <Download size={14} /> Descargar JPG
+                    </button>
+                  </div>
                 </div>
-                <div className="overflow-x-auto no-scrollbar" ref={scheduleRef}>
-                  <div className="min-w-[800px] bg-white p-4 rounded-3xl">
-                    <table className="w-full border-separate border-spacing-2">
-                      <thead>
-                        <tr>
-                          <th className="p-3 text-[10px] font-black text-slate-400 uppercase tracking-widest">Hora</th>
-                          {['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes'].map(day => (
-                            <th key={day} className="p-3 text-[10px] font-black text-slate-400 uppercase tracking-widest">{day}</th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {timeSlots.map(slot => (
-                          <tr key={slot.id}>
-                            <td className="p-3 bg-slate-50 rounded-xl border border-slate-100 text-center">
-                              <span className="text-[10px] font-black text-slate-700">{slot.start} - {slot.end}</span>
-                            </td>
-                            {['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes'].map(day => {
-                              const schedule = (schedules || []).find(s => 
-                                s.gradeId === consultasResult.grado && 
-                                s.section === consultasResult.seccion && 
-                                s.day === day && 
-                                s.timeSlotId === slot.id
-                              );
-                              const course = schedule ? courses.find(c => c.id === schedule.courseId) : null;
-                              return (
-                                <td key={day} className="p-1">
-                                  {course ? (
-                                    <div className="p-3 rounded-xl text-white text-center shadow-sm" style={{ backgroundColor: course.color }}>
-                                      <p className="text-[9px] font-black uppercase tracking-tight leading-tight">{course.name}</p>
-                                    </div>
-                                  ) : (
-                                    <div className="h-12 bg-slate-50/50 rounded-xl border border-dashed border-slate-100"></div>
-                                  )}
-                                </td>
-                              );
-                            })}
+                <div className={`relative ${isFullScreen ? 'flex-1 overflow-hidden' : ''}`}>
+                  <div className={`overflow-x-auto custom-scrollbar pb-4 ${isFullScreen ? 'h-full overflow-y-auto' : ''}`}>
+                    <div className={`min-w-[900px] bg-white p-6 rounded-3xl shadow-sm border border-slate-100 ${isFullScreen ? 'min-w-full' : ''}`} ref={scheduleRef}>
+                      <div className="mb-6 border-b border-slate-100 pb-4">
+                        <h4 className="text-xl font-black text-slate-900 uppercase tracking-tight">{consultasResult.nombre} {consultasResult.apellido}</h4>
+                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{consultasResult.grado} "{consultasResult.seccion}" - Horario Escolar</p>
+                      </div>
+                      <table className="w-full border-separate border-spacing-2">
+                        <thead>
+                          <tr>
+                            <th className="p-3 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center bg-slate-50 rounded-xl">Hora</th>
+                            {activeDays.map(day => (
+                              <th key={day} className="p-3 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center bg-slate-50 rounded-xl">{day}</th>
+                            ))}
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody>
+                          {timeSlots.map(slot => (
+                            <tr key={slot.id}>
+                              <td className="p-3 bg-slate-900 rounded-xl border border-slate-800 text-center shadow-md">
+                                <span className="text-[10px] font-black text-white whitespace-nowrap">{slot.start} - {slot.end}</span>
+                              </td>
+                              {activeDays.map(day => {
+                                const schedule = (schedules || []).find(s => 
+                                  (s.targetId === consultasResult.gradoId || (s.gradeId === consultasResult.grado && s.section === consultasResult.seccion)) && 
+                                  (s.dia === day || s.day === day) && 
+                                  (s.inicio === slot.start || s.timeSlotId === slot.id)
+                                );
+                                const course = schedule ? courses.find(c => c.name === schedule.materia || c.id === schedule.courseId) : null;
+                                return (
+                                  <td key={day} className="p-1">
+                                    {course ? (
+                                      <div className="p-4 rounded-xl text-white text-center shadow-md h-full flex flex-col justify-center min-h-[60px]" style={{ backgroundColor: course.color || '#3b82f6' }}>
+                                        <p className="text-[10px] font-black uppercase tracking-tight leading-tight">{course.name}</p>
+                                        {course.teacherName && <p className="text-[7px] font-bold opacity-80 mt-1 uppercase">{course.teacherName}</p>}
+                                      </div>
+                                    ) : (
+                                      <div className="h-16 bg-slate-50/50 rounded-xl border border-dashed border-slate-200 flex items-center justify-center">
+                                        <div className="w-1 h-1 bg-slate-200 rounded-full"></div>
+                                      </div>
+                                    )}
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                  {/* Scroll Indicator for Mobile */}
+                  <div className="absolute top-2 right-4 animate-pulse pointer-events-none md:hidden z-10">
+                    <div className="flex items-center gap-2 bg-blue-500/10 text-blue-600 px-3 py-1 rounded-full border border-blue-500/20 backdrop-blur-sm">
+                      <span className="text-[8px] font-black uppercase tracking-widest">Desliza para ver más →</span>
+                    </div>
                   </div>
                 </div>
               </div>

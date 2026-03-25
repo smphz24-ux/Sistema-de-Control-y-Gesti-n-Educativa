@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { createRoot } from 'react-dom/client';
+import * as htmlToImage from 'html-to-image';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, PieChart, Pie, Legend
 } from 'recharts';
@@ -55,7 +56,6 @@ import {
   Menu,
   ArrowLeft
 } from 'lucide-react';
-import * as htmlToImage from 'html-to-image';
 import QRCode from 'qrcode';
 import JSZip from 'jszip';
 import * as XLSX from 'xlsx';
@@ -102,6 +102,7 @@ const App = () => {
   });
 
   const [isBoletaModalOpen, setIsBoletaModalOpen] = useState(false);
+  const [isAdminScheduleFullScreen, setIsAdminScheduleFullScreen] = useState(false);
   const [activeTab, setActiveTab] = useState<'dashboard' | 'estudiantes' | 'asistencia' | 'calificaciones' | 'reportes' | 'alerta' | 'mi-panel' | 'config'>('dashboard');
   const [activeConfigSubTab, setActiveConfigSubTab] = useState<'usuarios' | 'sistema' | 'credenciales'>('usuarios');
   const [activeReportSubTab, setActiveReportSubTab] = useState<'global' | 'personalizado'>('global');
@@ -148,6 +149,72 @@ const App = () => {
   const [calificacionesMateriaFilter, setCalificacionesMateriaFilter] = useState("");
   const [calificacionesDateFilter, setCalificacionesDateFilter] = useState("");
   const [boletasSortOrder, setBoletasSortOrder] = useState<'merito' | 'demerito'>('merito');
+  const adminScheduleRef = useRef<HTMLDivElement>(null);
+
+  const handleDownloadAdminSchedule = useCallback(async () => {
+    if (adminScheduleRef.current) {
+      try {
+        const dataUrl = await htmlToImage.toJpeg(adminScheduleRef.current, { 
+          quality: 0.95, 
+          backgroundColor: '#ffffff',
+          style: {
+            padding: '40px',
+            borderRadius: '0',
+            width: '1300px' // Ensure full width is captured
+          }
+        });
+        const link = document.createElement('a');
+        link.download = `horario-escolar-${new Date().toLocaleDateString()}.jpg`;
+        link.href = dataUrl;
+        link.click();
+        setToast({ message: "Horario descargado con éxito", type: 'success' });
+      } catch (err) {
+        console.error('Error downloading schedule:', err);
+        setToast({ message: "Error al descargar el horario", type: 'error' });
+      }
+    }
+  }, []);
+  const handlePrintAdminSchedule = () => {
+    if (adminScheduleRef.current) {
+      const printContent = adminScheduleRef.current;
+      const printWindow = window.open('', '_blank');
+      if (!printWindow) return;
+      
+      printWindow.document.write(`
+        <html>
+          <head>
+            <title>Horario Escolar - ${activeConfig.siteName}</title>
+            <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+            <style>
+              @media print {
+                @page { size: landscape; margin: 1cm; }
+                body { -webkit-print-color-adjust: exact; }
+              }
+              body { font-family: sans-serif; padding: 20px; }
+              table { width: 100%; border-collapse: collapse; }
+              th, td { border: 1px solid #e2e8f0; padding: 8px; text-align: center; }
+              .bg-slate-900 { background-color: #0f172a !important; color: white !important; }
+              .rounded-xl { border-radius: 0.75rem; }
+            </style>
+          </head>
+          <body>
+            <div class="mb-6">
+              <h1 class="text-2xl font-black uppercase">${activeConfig.siteName}</h1>
+              <p class="text-xs font-bold text-slate-400 uppercase tracking-widest">Horario de Clases - ${gradeLevels.find(gl => gl.id === scheduleGradeFilter)?.nombre || 'General'}</p>
+            </div>
+            ${printContent.innerHTML}
+          </body>
+        </html>
+      `);
+      printWindow.document.close();
+      printWindow.focus();
+      setTimeout(() => {
+        printWindow.print();
+        printWindow.close();
+      }, 500);
+    }
+  };
+
   const [selectedBoletaStudent, setSelectedBoletaStudent] = useState<Student | null>(null);
 
   useEffect(() => {
@@ -695,6 +762,10 @@ const App = () => {
 
   // --- Gemini AI Logic ---
   const generateAiReport = async () => {
+    if (!process.env.GEMINI_API_KEY) {
+      setToast({ message: "Error: No se ha configurado la API Key de Gemini.", type: 'error' });
+      return;
+    }
     setIsAiLoading(true);
     try {
       // Corrected: Initializing GoogleGenAI according to guidelines using process.env.GEMINI_API_KEY directly
@@ -715,8 +786,8 @@ const App = () => {
       // Corrected: Accessing response.text directly as a property
       setAiReport(response.text || "No se pudo generar el reporte.");
     } catch (error) {
-      console.error(error);
-      setAiReport("Error al conectar con la sabiduría del Sensei.");
+      console.error('Gemini API Error:', error);
+      setAiReport("Error al conectar con la sabiduría del Sensei. Por favor, verifique su conexión o configuración de API.");
     } finally {
       setIsAiLoading(false);
     }
@@ -1762,31 +1833,46 @@ const App = () => {
 
   const handleAdminLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    console.log('Attempting admin login...');
     const hashedPassword = await hashPassword(adminLoginPassword);
+    console.log('Input password:', adminLoginPassword);
+    console.log('Hashed input:', hashedPassword);
+    
     // Only main admin (no parentId) can login here
     const adminUser = users.find(u => 
       u.role === 'admin' && 
-      u.parentId === undefined && 
-      (u.password === adminLoginPassword || u.password === hashedPassword)
+      u.parentId === undefined
     );
-    
+
     if (adminUser) {
-      const adminWithAllPerms = { ...adminUser, permissions: ALL_PERMISSIONS };
-      // Update password to hashed if it was plain text
-      if (adminWithAllPerms.password === adminLoginPassword) {
-        const updatedUser = { ...adminWithAllPerms, password: hashedPassword };
-        setUsers(users.map(u => u.id === adminUser.id ? updatedUser : u));
-        setCurrentUser(updatedUser);
+      console.log('Admin user found:', adminUser.username);
+      console.log('Stored password:', adminUser.password);
+      
+      const isMatch = adminUser.password === adminLoginPassword || adminUser.password === hashedPassword;
+      console.log('Password match:', isMatch);
+
+      if (isMatch) {
+        const adminWithAllPerms = { ...adminUser, permissions: ALL_PERMISSIONS };
+        // Update password to hashed if it was plain text
+        if (adminWithAllPerms.password === adminLoginPassword) {
+          console.log('Updating plain text password to hashed...');
+          const updatedUser = { ...adminWithAllPerms, password: hashedPassword };
+          setUsers(users.map(u => u.id === adminUser.id ? updatedUser : u));
+          setCurrentUser(updatedUser);
+        } else {
+          setCurrentUser(adminWithAllPerms);
+        }
+        setShowLanding(false);
+        setIsAdminLoginModalOpen(false);
+        setAdminLoginPassword("");
+        setIsAuthenticated(true);
+        setToast({ message: `Bienvenido Administrador, ${adminWithAllPerms.fullName || adminWithAllPerms.username}`, type: 'success' });
       } else {
-        setCurrentUser(adminWithAllPerms);
+        setToast({ message: "Contraseña administrativa incorrecta.", type: 'error' });
       }
-      setShowLanding(false);
-      setIsAdminLoginModalOpen(false);
-      setAdminLoginPassword("");
-      setIsAuthenticated(true);
-      setToast({ message: `Bienvenido Administrador, ${adminWithAllPerms.fullName || adminWithAllPerms.username}`, type: 'success' });
     } else {
-      setToast({ message: "Contraseña administrativa incorrecta.", type: 'error' });
+      console.log('No main admin user found in users list.');
+      setToast({ message: "No se encontró un administrador principal.", type: 'error' });
     }
   };
 
@@ -1820,7 +1906,12 @@ const App = () => {
 
   const handleVerifyPassword = async (password: string) => {
     const hashedPassword = await hashPassword(password);
-    return users.some(u => u.password === password || u.password === hashedPassword);
+    console.log("Verifying password:", { password, hashedPassword });
+    const match = users.some(u => u.password === password || u.password === hashedPassword) || 
+                  globalConfig.adminPassword === password || 
+                  globalConfig.adminPassword === hashedPassword;
+    console.log("Password match result:", match);
+    return match;
   };
 
   return (
@@ -4753,23 +4844,65 @@ const App = () => {
                           </div>
 
                           {/* Main: Schedule Grid */}
-                          <div className="lg:col-span-3 bg-white p-4 md:p-10 rounded-[2.5rem] shadow-2xl border border-slate-100 overflow-x-auto custom-scrollbar">
-                            <div className="min-w-[1000px]">
-                              <div className={`grid gap-2 mb-4`} style={{ gridTemplateColumns: `repeat(${schoolDays.length + 1}, 1fr)` }}>
+                          <div className="lg:col-span-3 space-y-4">
+                              <div className="flex flex-col sm:flex-row justify-between items-center bg-white p-6 rounded-[2rem] shadow-xl border border-slate-100 gap-4">
+                                <div>
+                                  <h4 className="text-xl font-black text-slate-800 uppercase tracking-tight">Diseño de Horario</h4>
+                                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Arrastra materias al calendario para asignar</p>
+                                </div>
+                                <div className="flex gap-2 w-full sm:w-auto">
+                                  <button 
+                                    onClick={() => setIsAdminScheduleFullScreen(!isAdminScheduleFullScreen)}
+                                    className="flex-1 sm:flex-none bg-blue-600 text-white px-6 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-blue-700 transition-all shadow-lg"
+                                  >
+                                    <Calendar size={16} /> {isAdminScheduleFullScreen ? 'Salir Pantalla Completa' : 'Pantalla Completa'}
+                                  </button>
+                                  <button 
+                                    onClick={handlePrintAdminSchedule}
+                                    className="flex-1 sm:flex-none bg-slate-100 text-slate-600 px-6 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-slate-200 transition-all shadow-sm"
+                                  >
+                                    <Printer size={16} /> Imprimir
+                                  </button>
+                                  <button 
+                                    onClick={handleDownloadAdminSchedule}
+                                    className="flex-1 sm:flex-none bg-slate-900 text-white px-6 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-slate-800 transition-all shadow-lg"
+                                  >
+                                    <Download size={16} /> Descargar JPG
+                                  </button>
+                                </div>
+                              </div>
+
+                              <div className={`bg-white p-4 md:p-10 rounded-[2.5rem] shadow-2xl border border-slate-100 overflow-x-auto custom-scrollbar relative ${isAdminScheduleFullScreen ? 'fixed inset-0 z-[200] rounded-none overflow-hidden flex flex-col' : ''}`}>
+                                {isAdminScheduleFullScreen && (
+                                  <button 
+                                    onClick={() => setIsAdminScheduleFullScreen(false)}
+                                    className="absolute top-4 right-4 z-[210] bg-black/20 hover:bg-black/40 text-white p-3 rounded-full transition-all shadow-lg"
+                                  >
+                                    <X size={24} />
+                                  </button>
+                                )}
+                                <div className={`absolute top-2 right-10 animate-pulse pointer-events-none md:hidden ${isAdminScheduleFullScreen ? 'hidden' : ''}`}>
+                                  <div className="flex items-center gap-2 bg-blue-500/10 text-blue-600 px-3 py-1 rounded-full border border-blue-500/20">
+                                    <span className="text-[8px] font-black uppercase tracking-widest">Desliza para ver más →</span>
+                                  </div>
+                                </div>
+                                
+                                <div className={`min-w-[1200px] ${isAdminScheduleFullScreen ? 'min-w-full h-full overflow-y-auto p-10' : ''}`} ref={adminScheduleRef}>
+                              <div className={`grid gap-3 mb-4`} style={{ gridTemplateColumns: `repeat(${schoolDays.length + 1}, 1fr)` }}>
                                 <div className="p-2"></div>
                                 {schoolDays.map(dia => (
-                                  <div key={dia} className="text-center font-black text-[10px] uppercase tracking-widest text-slate-400 py-2 bg-slate-50 rounded-xl">{dia}</div>
+                                  <div key={dia} className="text-center font-black text-[11px] uppercase tracking-widest text-slate-500 py-3 bg-slate-50 rounded-2xl border border-slate-100 shadow-sm">{dia}</div>
                                 ))}
                               </div>
-                              <div className="space-y-2">
+                              <div className="space-y-3">
                                 {timeSlots.map(slot => (
-                                  <div key={slot.id} className={`grid gap-2`} style={{ gridTemplateColumns: `repeat(${schoolDays.length + 1}, 1fr)` }}>
-                                    <div className="flex items-center justify-center bg-slate-900 text-white rounded-xl p-3 shadow-md">
-                                      <span className="font-black text-[10px] tracking-tighter">{slot.start}</span>
+                                  <div key={slot.id} className={`grid gap-3`} style={{ gridTemplateColumns: `repeat(${schoolDays.length + 1}, 1fr)` }}>
+                                    <div className="flex items-center justify-center bg-slate-900 text-white rounded-2xl p-4 shadow-xl border border-slate-800">
+                                      <span className="font-black text-[11px] tracking-tighter whitespace-nowrap">{slot.start} - {slot.end}</span>
                                     </div>
                                     {schoolDays.map(dia => {
                                       const targetId = scheduleGradeFilter;
-                                      const sch = schedules.find(s => s.dia === dia && s.inicio === slot.start && s.targetId === targetId);
+                                      const sch = schedules.find(s => (s.dia === dia || s.day === dia) && (s.inicio === slot.start || s.timeSlotId === slot.id) && s.targetId === targetId);
                                       return (
                                         <div 
                                           key={dia}
@@ -4780,7 +4913,7 @@ const App = () => {
                                               if (!courseToUse) return;
                                               
                                               // Check for conflicts in the same grade
-                                              const conflict = schedules.find(s => s.dia === dia && s.inicio === slot.start && s.targetId === targetId && s.id !== draggedSchedule?.id);
+                                              const conflict = schedules.find(s => (s.dia === dia || s.day === dia) && (s.inicio === slot.start || s.timeSlotId === slot.id) && s.targetId === targetId && s.id !== draggedSchedule?.id);
                                               if(conflict) {
                                                 setToast({ message: "Ya existe una clase en este horario", type: 'error' });
                                                 return;
@@ -4790,7 +4923,7 @@ const App = () => {
                                               const teacherId = courseToUse.teacherId;
                                               if (teacherId) {
                                                 const teacherConflict = schedules.find(s => {
-                                                  if (s.dia !== dia || s.inicio !== slot.start || s.id === draggedSchedule?.id) return false;
+                                                  if ((s.dia !== dia && s.day !== dia) || (s.inicio !== slot.start && s.timeSlotId !== slot.id) || s.id === draggedSchedule?.id) return false;
                                                   const sCourse = courses.find(c => c.name === s.materia);
                                                   return sCourse?.teacherId === teacherId;
                                                 });
@@ -4821,30 +4954,30 @@ const App = () => {
                                               setToast({ message: "Selecciona un grado primero", type: 'error' });
                                             }
                                           }}
-                                          className={`min-h-[80px] rounded-2xl border-2 border-dashed transition-all flex items-center justify-center p-2 relative group ${sch ? 'border-transparent shadow-sm' : 'border-slate-100 hover:border-blue-400 hover:bg-blue-50/50'}`}
+                                          className={`min-h-[100px] rounded-[1.5rem] border-2 border-dashed transition-all flex items-center justify-center p-3 relative group ${sch ? 'border-transparent shadow-md' : 'border-slate-100 hover:border-blue-400 hover:bg-blue-50/50'}`}
                                         >
                                           {sch ? (
                                             <div 
                                               draggable
                                               onDragStart={() => setDraggedSchedule(sch)}
-                                              className="w-full h-full rounded-xl flex flex-col items-center justify-center text-center p-2 shadow-sm border cursor-move relative transition-transform hover:scale-[1.02]"
+                                              className="w-full h-full rounded-2xl flex flex-col items-center justify-center text-center p-3 shadow-sm border-2 cursor-move relative transition-transform hover:scale-[1.02]"
                                               style={{ 
                                                 backgroundColor: (courses.find(c => c.name === sch.materia)?.color || '#3b82f6') + '15',
                                                 borderColor: (courses.find(c => c.name === sch.materia)?.color || '#3b82f6') + '40',
                                                 color: courses.find(c => c.name === sch.materia)?.color || '#1e293b'
                                               }}
                                             >
-                                              <span className="font-black text-[9px] uppercase leading-tight mb-1">{sch.materia}</span>
+                                              <span className="font-black text-[10px] uppercase leading-tight mb-2">{sch.materia}</span>
                                               <div className="flex items-center gap-1 opacity-60">
-                                                <GraduationCap size={8} />
-                                                <span className="text-[7px] font-bold uppercase">
+                                                <GraduationCap size={10} />
+                                                <span className="text-[8px] font-bold uppercase">
                                                   {students.find(s => s.id === courses.find(c => c.name === sch.materia)?.teacherId)?.nombre || 'S.D.'}
                                                 </span>
                                               </div>
                                               <button 
                                                 onClick={() => setSchedules(schedules.filter(s => s.id !== sch.id))}
-                                                className="absolute -top-2 -right-2 opacity-0 group-hover:opacity-100 p-1.5 bg-white rounded-full shadow-lg text-red-500 hover:scale-110 transition-all border border-slate-100"
-                                              ><X size={12} /></button>
+                                                className="absolute -top-3 -right-3 opacity-0 group-hover:opacity-100 p-2 bg-white rounded-full shadow-xl text-red-500 hover:scale-110 transition-all border border-slate-100 z-10"
+                                              ><X size={14} /></button>
                                             </div>
                                           ) : (
                                             <div className="flex flex-col items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
@@ -4861,7 +4994,8 @@ const App = () => {
                             </div>
                           </div>
                         </div>
-                      )}
+                      </div>
+                    )}
 
                       {activeHorariosSubTab === 'turnos' && (
                         <div className="space-y-6">
@@ -5534,51 +5668,51 @@ const App = () => {
 
       {/* --- STUDENT MODAL - RESTRUCTURED PROFESSIONAL DESIGN --- */}
       {isStudentModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 md:p-6 bg-slate-950/70 backdrop-blur-xl animate-fade-in">
-          <div className="bg-white rounded-[2.5rem] md:rounded-[4rem] shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto animate-slide-up border border-white/20">
-            <div className="p-6 md:p-10 border-b border-slate-100 flex justify-between items-center bg-blue-700 text-white sticky top-0 z-10">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-2 md:p-6 bg-slate-950/70 backdrop-blur-xl animate-fade-in">
+          <div className="bg-white rounded-3xl md:rounded-[4rem] shadow-2xl w-full max-w-3xl max-h-[95vh] md:max-h-[90vh] overflow-y-auto animate-slide-up border border-white/20">
+            <div className="p-5 md:p-10 border-b border-slate-100 flex justify-between items-center bg-blue-700 text-white sticky top-0 z-10">
               <div>
-                <h2 className="text-xl md:text-3xl font-black uppercase tracking-widest">{editingStudent ? 'Actualizar Registro' : 'Nuevo Registro'}</h2>
-                <p className="text-blue-100 text-[10px] font-bold uppercase mt-1">Diligencie los campos para {activeConfig.siteName}</p>
+                <h2 className="text-lg md:text-3xl font-black uppercase tracking-widest">{editingStudent ? 'Actualizar Registro' : 'Nuevo Registro'}</h2>
+                <p className="text-blue-100 text-[8px] md:text-[10px] font-bold uppercase mt-1">Diligencie los campos para {activeConfig.siteName}</p>
               </div>
-              <button onClick={() => setIsStudentModalOpen(false)} className="hover:bg-white/20 p-2 md:p-3 rounded-full transition-all"><X size={24} /></button>
+              <button onClick={() => setIsStudentModalOpen(false)} className="hover:bg-white/20 p-2 md:p-3 rounded-full transition-all"><X size={20} md:size={24} /></button>
             </div>
-            <form onSubmit={handleSaveStudent} className="p-6 md:p-10 space-y-6 md:space-y-8 bg-white">
+            <form onSubmit={handleSaveStudent} className="p-5 md:p-10 space-y-5 md:space-y-8 bg-white">
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
                 {/* Section 1: Identity */}
-                <div className="space-y-3">
-                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-2">1. Cargo (Rol)</label>
-                  <select name="rol" defaultValue={editingStudent?.rol || 'Estudiante'} className="w-full p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-blue-800 text-lg appearance-none shadow-sm transition-all outline-none">
+                <div className="space-y-2">
+                  <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-2">1. Cargo (Rol)</label>
+                  <select name="rol" defaultValue={editingStudent?.rol || 'Estudiante'} className="w-full p-3 md:p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-blue-800 text-sm md:text-lg appearance-none shadow-sm transition-all outline-none">
                     <option value="Estudiante">Estudiante</option>
                     <option value="Docente">Docente</option>
                   </select>
                 </div>
-                <div className="space-y-3">
-                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-2">2. DNI / Identificación</label>
-                  <input name="dni" defaultValue={editingStudent?.dni} required placeholder="Número de DNI" className="w-full p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black font-mono text-xl shadow-sm transition-all outline-none" />
+                <div className="space-y-2">
+                  <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-2">2. DNI / Identificación</label>
+                  <input name="dni" defaultValue={editingStudent?.dni} required placeholder="Número de DNI" className="w-full p-3 md:p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black font-mono text-sm md:text-xl shadow-sm transition-all outline-none" />
                 </div>
-                <div className="space-y-3">
-                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-2">3. Nombres</label>
-                  <input name="nombre" defaultValue={editingStudent?.nombre} required placeholder="Nombres del titular" className="w-full p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-lg shadow-sm transition-all outline-none" />
+                <div className="space-y-2">
+                  <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-2">3. Nombres</label>
+                  <input name="nombre" defaultValue={editingStudent?.nombre} required placeholder="Nombres del titular" className="w-full p-3 md:p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-sm md:text-lg shadow-sm transition-all outline-none" />
                 </div>
 
                 {/* Section 2: Personal Details */}
-                <div className="space-y-3 md:col-span-2">
-                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-2">4. Apellidos Completos</label>
-                  <input name="apellido" defaultValue={editingStudent?.apellido} required placeholder="Apellidos paterno y materno" className="w-full p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-lg shadow-sm transition-all outline-none" />
+                <div className="space-y-2 md:col-span-2">
+                  <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-2">4. Apellidos Completos</label>
+                  <input name="apellido" defaultValue={editingStudent?.apellido} required placeholder="Apellidos paterno y materno" className="w-full p-3 md:p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-sm md:text-lg shadow-sm transition-all outline-none" />
                 </div>
-                <div className="space-y-3">
-                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-2">5. Nivel</label>
-                  <select name="nivel" defaultValue={editingStudent?.nivel || 'Primaria'} className="w-full p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-lg shadow-sm appearance-none outline-none">
+                <div className="space-y-2">
+                  <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-2">5. Nivel</label>
+                  <select name="nivel" defaultValue={editingStudent?.nivel || 'Primaria'} className="w-full p-3 md:p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-sm md:text-lg shadow-sm appearance-none outline-none">
                     {levels.map(lvl => (
                       <option key={lvl.id} value={lvl.nombre}>{lvl.nombre}</option>
                     ))}
                     <option value="Docente">Docente</option>
                   </select>
                 </div>
-                <div className="space-y-3">
-                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-2">6. Grado / Aula</label>
-                  <select name="grado" defaultValue={editingStudent?.grado} className="w-full p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-lg shadow-sm appearance-none outline-none">
+                <div className="space-y-2">
+                  <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-2">6. Grado / Aula</label>
+                  <select name="grado" defaultValue={editingStudent?.grado} className="w-full p-3 md:p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-sm md:text-lg shadow-sm appearance-none outline-none">
                     {gradeLevels.map(gl => (
                       <option key={gl.id} value={gl.nombre}>{gl.nombre}</option>
                     ))}
@@ -5587,32 +5721,31 @@ const App = () => {
                 </div>
 
                 {/* Section 3: More Details */}
-                <div className="space-y-3">
-                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-2">7. Sección</label>
-                  <select name="seccion" defaultValue={editingStudent?.seccion || 'A'} className="w-full p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-lg shadow-sm appearance-none outline-none">
+                <div className="space-y-2">
+                  <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-2">7. Sección</label>
+                  <select name="seccion" defaultValue={editingStudent?.seccion || 'A'} className="w-full p-3 md:p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-sm md:text-lg shadow-sm appearance-none outline-none">
                     {['A', 'B', 'C', 'D', 'E', 'F', 'G'].map(s => (
                       <option key={s} value={s}>{s}</option>
                     ))}
                   </select>
                 </div>
-                <div className="space-y-3">
-                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-2">7. Celular Apoderado (Opcional)</label>
+                <div className="space-y-2">
+                  <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-2">7. Celular Apoderado (Opcional)</label>
                   <div className="relative">
-                    <Phone size={18} className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-400" />
-                    <input name="celularApoderado" defaultValue={editingStudent?.celularApoderado} placeholder="999 999 999" className="w-full pl-12 p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-lg shadow-sm outline-none" />
+                    <Phone size={14} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input name="celularApoderado" defaultValue={editingStudent?.celularApoderado} placeholder="999 999 999" className="w-full pl-11 p-3 md:p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-sm md:text-lg shadow-sm outline-none" />
                   </div>
                 </div>
-                <div className="space-y-3">
-                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-2">8. Correo Electrónico (Opcional)</label>
+                <div className="space-y-2">
+                  <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-2">8. Correo Electrónico (Opcional)</label>
                   <div className="relative">
-                    <Mail size={18} className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-400" />
-                    <input name="email" type="email" defaultValue={editingStudent?.email} placeholder="ejemplo@correo.com" className="w-full pl-12 p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-lg shadow-sm outline-none" />
+                    <Mail size={14} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input name="email" type="email" defaultValue={editingStudent?.email} placeholder="ejemplo@correo.com" className="w-full pl-11 p-3 md:p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-sm md:text-lg shadow-sm outline-none" />
                   </div>
                 </div>
-
-                <div className="space-y-3">
-                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-2">9. Turno (Opcional)</label>
-                  <select name="turno" defaultValue={editingStudent?.turno || 'Mañana'} className="w-full p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-lg shadow-sm appearance-none outline-none">
+                <div className="space-y-2">
+                  <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-2">9. Turno (Opcional)</label>
+                  <select name="turno" defaultValue={editingStudent?.turno || 'Mañana'} className="w-full p-4 md:p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-base md:text-lg shadow-sm appearance-none outline-none">
                     {shifts.map(s => (
                       <option key={s.id} value={s.nombre}>{s.nombre}</option>
                     ))}
@@ -5629,19 +5762,19 @@ const App = () => {
 
                 {/* Personalization Section */}
                 <div className="space-y-3 md:col-span-3 pt-6 border-t border-slate-100">
-                  <h4 className="text-[10px] font-black text-blue-600 uppercase tracking-[0.3em] mb-4">Personalización de Fotocheck (Opcional)</h4>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                    <div className="space-y-3">
-                      <label className="block text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-2">Nombre del Sitio (Personalizado)</label>
-                      <input name="siteName" defaultValue={editingStudent?.siteName} placeholder="Ej. I.E. San Juan Bautista" className="w-full p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-lg shadow-sm outline-none" />
+                  <h4 className="text-[9px] md:text-[10px] font-black text-blue-600 uppercase tracking-[0.3em] mb-4">Personalización de Fotocheck (Opcional)</h4>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-8">
+                    <div className="space-y-2">
+                      <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-2">Nombre del Sitio (Personalizado)</label>
+                      <input name="siteName" defaultValue={editingStudent?.siteName} placeholder="Ej. I.E. San Juan Bautista" className="w-full p-4 md:p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-base md:text-lg shadow-sm outline-none" />
                     </div>
-                    <div className="space-y-3">
-                      <label className="block text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-2">Slogan (Personalizado)</label>
-                      <input name="slogan" defaultValue={editingStudent?.slogan} placeholder="Ej. Educación de Calidad" className="w-full p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-lg shadow-sm outline-none" />
+                    <div className="space-y-2">
+                      <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-2">Slogan (Personalizado)</label>
+                      <input name="slogan" defaultValue={editingStudent?.slogan} placeholder="Ej. Educación de Calidad" className="w-full p-4 md:p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-base md:text-lg shadow-sm outline-none" />
                     </div>
-                    <div className="space-y-3 md:col-span-2">
-                      <label className="block text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-2">Logo Institucional (Personalizado)</label>
-                      <div className="flex items-center gap-6">
+                    <div className="space-y-2 md:col-span-2">
+                      <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-2">Logo Institucional (Personalizado)</label>
+                      <div className="flex flex-col sm:flex-row items-center gap-4 md:gap-6">
                         <div className="w-16 h-16 bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200 flex items-center justify-center overflow-hidden">
                           {editingStudent?.logo ? <img src={editingStudent.logo} className="w-full h-full object-contain p-2" /> : <Upload className="text-slate-300" />}
                         </div>
@@ -5663,7 +5796,7 @@ const App = () => {
                             };
                             input.click();
                           }}
-                          className="px-6 py-3 bg-slate-900 text-white rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-black transition-all"
+                          className="w-full sm:w-auto px-6 py-3 bg-slate-900 text-white rounded-xl font-black text-[9px] md:text-[10px] uppercase tracking-widest hover:bg-black transition-all"
                         >
                           Subir Logo para este Estudiante
                         </button>
@@ -5671,7 +5804,7 @@ const App = () => {
                           <button 
                             type="button"
                             onClick={() => setEditingStudent({ ...editingStudent, logo: undefined })}
-                            className="text-[10px] font-black text-rose-500 uppercase tracking-widest hover:underline"
+                            className="text-[9px] md:text-[10px] font-black text-rose-500 uppercase tracking-widest hover:underline"
                           >
                             Eliminar Logo
                           </button>
@@ -5682,10 +5815,10 @@ const App = () => {
                 </div>
               </div>
 
-              <div className="flex gap-6 pt-10 border-t border-slate-100">
-                <button type="button" onClick={() => setIsStudentModalOpen(false)} className="flex-1 py-6 rounded-[2rem] border-4 border-slate-50 text-slate-400 font-black hover:bg-slate-50 uppercase tracking-widest text-sm transition-all">Cancelar</button>
-                <button type="submit" className="flex-1 py-6 rounded-[2rem] bg-blue-600 text-white font-black shadow-2xl hover:bg-blue-700 uppercase tracking-widest text-sm transition-all flex items-center justify-center gap-3">
-                   <Save size={20} /> {editingStudent ? 'Actualizar Registro' : 'Completar Registro'}
+              <div className="flex flex-col sm:flex-row gap-4 md:gap-6 pt-6 md:pt-10 border-t border-slate-100">
+                <button type="button" onClick={() => setIsStudentModalOpen(false)} className="flex-1 py-4 md:py-6 rounded-2xl md:rounded-[2rem] border-2 md:border-4 border-slate-50 text-slate-400 font-black hover:bg-slate-50 uppercase tracking-widest text-xs md:text-sm transition-all">Cancelar</button>
+                <button type="submit" className="flex-1 py-4 md:py-6 rounded-2xl md:rounded-[2rem] bg-blue-600 text-white font-black shadow-2xl hover:bg-blue-700 uppercase tracking-widest text-xs md:text-sm transition-all flex items-center justify-center gap-3">
+                   <Save size={18} md:size={20} /> {editingStudent ? 'Actualizar Registro' : 'Completar Registro'}
                 </button>
               </div>
             </form>
@@ -5723,11 +5856,11 @@ const App = () => {
       {/* --- USER MODAL --- */}
       {/* --- PANEL MODALS --- */}
       {panelModalType === 'section' && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-6 bg-slate-950/70 backdrop-blur-xl animate-fade-in">
-          <div className="bg-white rounded-[4rem] shadow-2xl w-full max-w-md overflow-hidden animate-slide-up border border-white/20">
-            <div className="p-10 border-b border-slate-100 flex justify-between items-center bg-blue-700 text-white" style={{ backgroundColor: activeConfig.theme.primaryColor }}>
-              <h2 className="text-2xl font-black uppercase tracking-widest">{editingSection ? 'Editar Sección' : 'Nueva Sección'}</h2>
-              <button onClick={() => { setPanelModalType(null); setEditingSection(null); }} className="hover:bg-white/20 p-3 rounded-full transition-all"><X size={24} /></button>
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 md:p-6 bg-slate-950/70 backdrop-blur-xl animate-fade-in">
+          <div className="bg-white rounded-[2rem] md:rounded-[4rem] shadow-2xl w-full max-w-md overflow-hidden animate-slide-up border border-white/20">
+            <div className="p-6 md:p-10 border-b border-slate-100 flex justify-between items-center bg-blue-700 text-white" style={{ backgroundColor: activeConfig.theme.primaryColor }}>
+              <h2 className="text-xl md:text-2xl font-black uppercase tracking-widest">{editingSection ? 'Editar Sección' : 'Nueva Sección'}</h2>
+              <button onClick={() => { setPanelModalType(null); setEditingSection(null); }} className="hover:bg-white/20 p-2 md:p-3 rounded-full transition-all"><X size={20} md:size={24} /></button>
             </div>
             <form onSubmit={(e: any) => {
               e.preventDefault();
@@ -5748,12 +5881,12 @@ const App = () => {
                 setPanelModalType(null);
                 setEditingSection(null);
               }
-            }} className="p-10 space-y-6">
+            }} className="p-6 md:p-10 space-y-4 md:space-y-6">
               <div className="space-y-2">
-                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Nombre de la Sección</label>
-                <input name="nombre" required defaultValue={editingSection || ''} placeholder="Ej. A" className="w-full p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-lg outline-none transition-all" />
+                <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Nombre de la Sección</label>
+                <input name="nombre" required defaultValue={editingSection || ''} placeholder="Ej. A" className="w-full p-4 md:p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-base md:text-lg outline-none transition-all" />
               </div>
-              <button type="submit" className="w-full py-5 bg-blue-600 text-white rounded-2xl font-black uppercase tracking-widest text-xs shadow-xl hover:bg-blue-700 transition-all" style={{ backgroundColor: activeConfig.theme.primaryColor }}>
+              <button type="submit" className="w-full py-4 md:py-5 bg-blue-600 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] md:text-xs shadow-xl hover:bg-blue-700 transition-all" style={{ backgroundColor: activeConfig.theme.primaryColor }}>
                 {editingSection ? 'Actualizar Sección' : 'Guardar Sección'}
               </button>
             </form>
@@ -5762,11 +5895,11 @@ const App = () => {
       )}
 
       {panelModalType === 'level' && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-6 bg-slate-950/70 backdrop-blur-xl animate-fade-in">
-          <div className="bg-white rounded-[4rem] shadow-2xl w-full max-w-md overflow-hidden animate-slide-up border border-white/20">
-            <div className="p-10 border-b border-slate-100 flex justify-between items-center bg-blue-700 text-white" style={{ backgroundColor: activeConfig.theme.primaryColor }}>
-              <h2 className="text-2xl font-black uppercase tracking-widest">{editingLevel ? 'Editar Nivel' : 'Nuevo Nivel'}</h2>
-              <button onClick={() => { setPanelModalType(null); setEditingLevel(null); }} className="hover:bg-white/20 p-3 rounded-full transition-all"><X size={24} /></button>
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 md:p-6 bg-slate-950/70 backdrop-blur-xl animate-fade-in">
+          <div className="bg-white rounded-[2rem] md:rounded-[4rem] shadow-2xl w-full max-w-md overflow-hidden animate-slide-up border border-white/20">
+            <div className="p-6 md:p-10 border-b border-slate-100 flex justify-between items-center bg-blue-700 text-white" style={{ backgroundColor: activeConfig.theme.primaryColor }}>
+              <h2 className="text-xl md:text-2xl font-black uppercase tracking-widest">{editingLevel ? 'Editar Nivel' : 'Nuevo Nivel'}</h2>
+              <button onClick={() => { setPanelModalType(null); setEditingLevel(null); }} className="hover:bg-white/20 p-2 md:p-3 rounded-full transition-all"><X size={20} md:size={24} /></button>
             </div>
             <form onSubmit={(e: any) => {
               e.preventDefault();
@@ -5782,12 +5915,12 @@ const App = () => {
                 setPanelModalType(null);
                 setEditingLevel(null);
               }
-            }} className="p-10 space-y-6">
+            }} className="p-6 md:p-10 space-y-4 md:space-y-6">
               <div className="space-y-2">
-                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Nombre del Nivel</label>
-                <input name="nombre" required defaultValue={editingLevel?.nombre || ''} placeholder="Ej. Primaria" className="w-full p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-lg outline-none transition-all" />
+                <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Nombre del Nivel</label>
+                <input name="nombre" required defaultValue={editingLevel?.nombre || ''} placeholder="Ej. Primaria" className="w-full p-4 md:p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-base md:text-lg outline-none transition-all" />
               </div>
-              <button type="submit" className="w-full py-5 bg-blue-600 text-white rounded-2xl font-black uppercase tracking-widest text-xs shadow-xl hover:bg-blue-700 transition-all" style={{ backgroundColor: activeConfig.theme.primaryColor }}>
+              <button type="submit" className="w-full py-4 md:py-5 bg-blue-600 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] md:text-xs shadow-xl hover:bg-blue-700 transition-all" style={{ backgroundColor: activeConfig.theme.primaryColor }}>
                 {editingLevel ? 'Actualizar Nivel' : 'Guardar Nivel'}
               </button>
             </form>
@@ -5796,11 +5929,11 @@ const App = () => {
       )}
 
       {panelModalType === 'grade' && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-6 bg-slate-950/70 backdrop-blur-xl animate-fade-in">
-          <div className="bg-white rounded-[4rem] shadow-2xl w-full max-w-lg overflow-hidden animate-slide-up border border-white/20">
-            <div className="p-10 border-b border-slate-100 flex justify-between items-center bg-blue-700 text-white" style={{ backgroundColor: activeConfig.theme.primaryColor }}>
-              <h2 className="text-2xl font-black uppercase tracking-widest">{editingGradeLevel ? 'Editar Grado' : 'Nuevo Grado'}</h2>
-              <button onClick={() => { setPanelModalType(null); setEditingGradeLevel(null); }} className="hover:bg-white/20 p-3 rounded-full transition-all"><X size={24} /></button>
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 md:p-6 bg-slate-950/70 backdrop-blur-xl animate-fade-in">
+          <div className="bg-white rounded-[2rem] md:rounded-[4rem] shadow-2xl w-full max-w-lg overflow-hidden animate-slide-up border border-white/20">
+            <div className="p-6 md:p-10 border-b border-slate-100 flex justify-between items-center bg-blue-700 text-white" style={{ backgroundColor: activeConfig.theme.primaryColor }}>
+              <h2 className="text-xl md:text-2xl font-black uppercase tracking-widest">{editingGradeLevel ? 'Editar Grado' : 'Nuevo Grado'}</h2>
+              <button onClick={() => { setPanelModalType(null); setEditingGradeLevel(null); }} className="hover:bg-white/20 p-2 md:p-3 rounded-full transition-all"><X size={20} md:size={24} /></button>
             </div>
             <form onSubmit={(e: any) => {
               e.preventDefault();
@@ -5818,26 +5951,26 @@ const App = () => {
                 setPanelModalType(null);
                 setEditingGradeLevel(null);
               }
-            }} className="p-10 space-y-6">
+            }} className="p-6 md:p-10 space-y-4 md:space-y-6">
               <div className="space-y-2">
-                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Nombre del Grado</label>
-                <input name="nombre" required defaultValue={editingGradeLevel?.nombre || ''} placeholder="Ej. 1er Grado" className="w-full p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-lg outline-none transition-all" />
+                <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Nombre del Grado</label>
+                <input name="nombre" required defaultValue={editingGradeLevel?.nombre || ''} placeholder="Ej. 1er Grado" className="w-full p-4 md:p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-base md:text-lg outline-none transition-all" />
               </div>
-              <div className="grid grid-cols-2 gap-6">
+              <div className="grid grid-cols-2 gap-4 md:gap-6">
                 <div className="space-y-2">
-                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Sección</label>
-                  <select name="seccion" defaultValue={editingGradeLevel?.seccion || 'A'} className="w-full p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-lg outline-none appearance-none">
+                  <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Sección</label>
+                  <select name="seccion" defaultValue={editingGradeLevel?.seccion || 'A'} className="w-full p-4 md:p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-base md:text-lg outline-none appearance-none">
                     {sections.map(s => <option key={s} value={s}>{s}</option>)}
                   </select>
                 </div>
                 <div className="space-y-2">
-                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Nivel Académico</label>
-                  <select name="nivelId" defaultValue={editingGradeLevel?.nivelId || levels[0]?.id} className="w-full p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-lg outline-none appearance-none">
+                  <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Nivel Académico</label>
+                  <select name="nivelId" defaultValue={editingGradeLevel?.nivelId || levels[0]?.id} className="w-full p-4 md:p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-base md:text-lg outline-none appearance-none">
                     {levels.map(l => <option key={l.id} value={l.id}>{l.nombre}</option>)}
                   </select>
                 </div>
               </div>
-              <button type="submit" className="w-full py-5 bg-blue-600 text-white rounded-2xl font-black uppercase tracking-widest text-xs shadow-xl hover:bg-blue-700 transition-all" style={{ backgroundColor: activeConfig.theme.primaryColor }}>
+              <button type="submit" className="w-full py-4 md:py-5 bg-blue-600 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] md:text-xs shadow-xl hover:bg-blue-700 transition-all" style={{ backgroundColor: activeConfig.theme.primaryColor }}>
                 {editingGradeLevel ? 'Actualizar Grado' : 'Guardar Grado'}
               </button>
             </form>
