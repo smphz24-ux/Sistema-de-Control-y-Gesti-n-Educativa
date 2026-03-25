@@ -59,7 +59,7 @@ import {
 import QRCode from 'qrcode';
 import JSZip from 'jszip';
 import * as XLSX from 'xlsx';
-import jsPDF from 'jspdf';
+import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
 import { 
@@ -602,13 +602,26 @@ const App = () => {
     
     try {
       const { toPng } = await import('html-to-image');
+      
+      // Capture with a fixed width to ensure consistency
       const dataUrl = await toPng(boletaRef.current, {
         quality: 1,
-        pixelRatio: 2,
-        backgroundColor: '#ffffff'
+        pixelRatio: 2, // 2 is usually enough for A4
+        backgroundColor: '#ffffff',
+        cacheBust: true,
+        style: {
+          transform: 'scale(1)',
+          transformOrigin: 'top left',
+          width: '1000px', // Fixed width for capture
+          margin: '0',
+          padding: '48px', // Match p-12
+          borderRadius: '0',
+          border: 'none',
+          boxShadow: 'none'
+        }
       });
       
-      const doc = new (window as any).jspdf.jsPDF({
+      const doc = new jsPDF({
         orientation: 'portrait',
         unit: 'mm',
         format: 'a4'
@@ -617,8 +630,21 @@ const App = () => {
       const imgProps = doc.getImageProperties(dataUrl);
       const pdfWidth = doc.internal.pageSize.getWidth();
       const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
+      const pageHeight = doc.internal.pageSize.getHeight();
       
-      doc.addImage(dataUrl, 'PNG', 0, 0, pdfWidth, pdfHeight);
+      // Scale to fit A4 if it's too tall
+      let finalWidth = pdfWidth;
+      let finalHeight = pdfHeight;
+      
+      if (finalHeight > pageHeight) {
+        finalHeight = pageHeight;
+        finalWidth = (imgProps.width * finalHeight) / imgProps.height;
+      }
+      
+      // Center horizontally
+      const xOffset = (pdfWidth - finalWidth) / 2;
+      
+      doc.addImage(dataUrl, 'PNG', xOffset, 0, finalWidth, finalHeight);
       doc.save(`Boleta_${selectedBoletaStudent.nombre}_${selectedBoletaStudent.apellido}.pdf`);
       setToast({ message: "Boleta descargada con éxito", type: 'success' });
     } catch (error) {
@@ -3552,7 +3578,7 @@ const App = () => {
                          </div>
                        </div>
 
-                       <div ref={boletaRef} className="bg-white p-12 rounded-[3rem] border-8 border-slate-50 shadow-inner max-w-4xl mx-auto print:shadow-none print:border-0 print:p-0">
+                        <div id="boleta-generada" ref={boletaRef} className="bg-white p-12 rounded-[3rem] border-8 border-slate-50 shadow-inner max-w-4xl mx-auto print:shadow-none print:border-0 print:p-0">
                          <div className="flex justify-between items-start mb-12 border-b-4 border-slate-50 pb-8">
                            <div className="flex items-center gap-6">
                              <div className="w-24 h-24 bg-blue-600 rounded-[2rem] flex items-center justify-center text-white shadow-2xl">

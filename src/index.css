@@ -96,6 +96,10 @@ body {
 }
 
 @media print {
+    @page {
+        size: A4;
+        margin: 10mm;
+    }
     .no-print, .no-print * {
         display: none !important;
     }
@@ -103,6 +107,7 @@ body {
         background: white !important;
         padding: 0 !important;
         margin: 0 !important;
+        width: 100%;
     }
     .print-only {
         display: block !important;
@@ -115,5 +120,22 @@ body {
     }
     .rounded-\[3rem\], .rounded-\[2rem\], .rounded-2xl, .rounded-xl {
         border-radius: 0 !important;
+    }
+    /* Ensure the boleta takes full width on print */
+    #boleta-generada, .max-w-4xl {
+        max-width: 100% !important;
+        width: 100% !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        overflow: visible !important;
+    }
+    #boleta-generada h1, #boleta-generada h2, #boleta-generada h3 {
+        break-after: avoid;
+    }
+    #boleta-generada .grid, #boleta-generada table {
+        break-inside: avoid;
+    }
+    #boleta-generada .border-t-2 {
+        break-inside: avoid;
     }
 }
