@@ -21,7 +21,9 @@
     "jspdf-autotable": "^5.0.7",
     "jsqr": "^1.4.0",
     "jszip": "^3.10.1",
+    "lodash.debounce": "^4.0.8",
     "lucide-react": "0.474.0",
+    "motion": "^12.38.0",
     "qrcode": "^1.5.4",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
@@ -32,6 +34,7 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "@types/lodash.debounce": "^4.0.9",
     "@types/node": "^22.14.0",
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^5.0.0",

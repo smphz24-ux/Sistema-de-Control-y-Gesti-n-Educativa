@@ -1,15 +1,26 @@
 
 import { AppUser, UserConfig, Student, Attendance, Grade, Incidence, Level, GradeLevel, Schedule, Shift } from '../types';
 
-const fetchWithRetry = async (url: string, options?: RequestInit, retries = 3, backoff = 1000) => {
+const fetchWithRetry = async (url: string, options?: RequestInit, retries = 5, backoff = 1000) => {
   for (let i = 0; i < retries; i++) {
     try {
       const res = await fetch(url, options);
       if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
-      return await res.json();
+      const contentType = res.headers.get("content-type");
+      if (contentType && contentType.includes("application/json")) {
+        return await res.json();
+      }
+      return await res.text();
     } catch (err) {
-      if (i === retries - 1) throw err;
-      await new Promise(resolve => setTimeout(resolve, backoff * (i + 1)));
+      const isNetworkError = err instanceof TypeError && err.message === 'Failed to fetch';
+      const isRetryableError = isNetworkError || (err instanceof Error && err.message.includes('HTTP error! status: 5'));
+      
+      if (i === retries - 1 || !isRetryableError) throw err;
+      
+      // Exponential backoff with jitter
+      const delay = backoff * Math.pow(2, i) + Math.random() * 1000;
+      console.warn(`Fetch attempt ${i + 1} failed for ${url}. Retrying in ${Math.round(delay)}ms...`, err);
+      await new Promise(resolve => setTimeout(resolve, delay));
     }
   }
 };
@@ -19,7 +30,7 @@ export const fetchConfig = async () => {
 };
 
 export const saveConfig = async (config: UserConfig) => {
-  await fetch('/api/config', {
+  return fetchWithRetry('/api/config', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(config)
@@ -31,7 +42,7 @@ export const fetchUsers = async () => {
 };
 
 export const saveUsers = async (users: AppUser[]) => {
-  await fetch('/api/users', {
+  return fetchWithRetry('/api/users', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(users)
@@ -43,7 +54,7 @@ export const fetchUserData = async (ownerId: string) => {
 };
 
 export const saveUserData = async (ownerId: string, data: any) => {
-  await fetch(`/api/data/${ownerId}`, {
+  return fetchWithRetry(`/api/data/${ownerId}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data)

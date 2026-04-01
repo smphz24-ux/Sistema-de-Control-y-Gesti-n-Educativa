@@ -1,0 +1,74 @@
+{
+  "siteName": "Sistema de Control y Gestión",
+  "slogan": "Educación con Valores y Tecnología",
+  "logo": "https://picsum.photos/seed/educativa/200",
+  "theme": {
+    "primaryColor": "#1e3a8a",
+    "secondaryColor": "#3b82f6",
+    "fontFamily": "Poppins"
+  },
+  "publicModules": {
+    "attendance": true,
+    "alerts": true,
+    "schedule": true,
+    "grades": true,
+    "hideTeacherSchedule": false
+  },
+  "meritCategories": [
+    {
+      "id": "1",
+      "name": "Valores",
+      "points": 5
+    },
+    {
+      "id": "2",
+      "name": "Responsabilidad",
+      "points": 10
+    },
+    {
+      "id": "3",
+      "name": "Liderazgo",
+      "points": 5
+    },
+    {
+      "id": "4",
+      "name": "Académico",
+      "points": 10
+    },
+    {
+      "id": "5",
+      "name": "Honestidad",
+      "points": 10
+    }
+  ],
+  "demeritCategories": [
+    {
+      "id": "1",
+      "name": "Leve",
+      "points": -5
+    },
+    {
+      "id": "2",
+      "name": "Moderada",
+      "points": -10
+    },
+    {
+      "id": "3",
+      "name": "Grave",
+      "points": -20
+    },
+    {
+      "id": "4",
+      "name": "Muy Grave",
+      "points": -40
+    }
+  ],
+  "footerText": "Control y Gestión 2026 © 2024",
+  "credentialConfig": {
+    "studentColor": "#3b82f6",
+    "teacherColor": "#10b981",
+    "width": 86,
+    "height": 54
+  },
+  "periods": []
+}

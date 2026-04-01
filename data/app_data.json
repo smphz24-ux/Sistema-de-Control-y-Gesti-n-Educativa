@@ -1,0 +1,35 @@
+{
+  "admin-1": {
+    "students": [],
+    "attendance": [],
+    "grades": [],
+    "incidences": [],
+    "courses": [],
+    "gradeLevels": [],
+    "schedules": [],
+    "shifts": [],
+    "sections": ["A", "B", "C", "D", "E"],
+    "levels": [
+      { "id": "1", "nombre": "Inicial" },
+      { "id": "2", "nombre": "Primaria" },
+      { "id": "3", "nombre": "Secundaria" }
+    ],
+    "gradeTypes": [
+      { "id": "1", "name": "Tarea" },
+      { "id": "2", "name": "Examen" },
+      { "id": "3", "name": "Medición" },
+      { "id": "4", "name": "Participación" }
+    ],
+    "timeSlots": [],
+    "schoolDays": ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"],
+    "incidenceTypes": [
+      { "id": "1", "name": "Acumulación de tardanzas" },
+      { "id": "2", "name": "Incumplimiento de tareas" },
+      { "id": "3", "name": "Faltas repetidas" },
+      { "id": "4", "name": "Celular en clases" },
+      { "id": "5", "name": "Conducta inapropiada en la institución" }
+    ],
+    "consultationLogs": [],
+    "conductActions": []
+  }
+}

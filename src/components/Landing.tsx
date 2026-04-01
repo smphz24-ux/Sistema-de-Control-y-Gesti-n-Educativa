@@ -3,6 +3,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { GraduationCap, Search, Lock, X, Keyboard, User, QrCode, Clock, LogIn, LogOut, ArrowLeft } from 'lucide-react';
 import { AppConfig } from '../types';
 import jsQR from 'jsqr';
+import { motion, AnimatePresence } from 'motion/react';
 
 interface LandingProps {
   globalConfig: AppConfig;
@@ -23,6 +24,24 @@ const Landing: React.FC<LandingProps> = ({ globalConfig, onConsultasSearch, onAd
   const [asistenciaDni, setAsistenciaDni] = useState("");
   const [asistenciaType, setAsistenciaType] = useState<'entrada' | 'salida' | 'tardanza'>('entrada');
   const [isScanning, setIsScanning] = useState(false);
+
+  const pub = globalConfig.publicModules || { attendance: true, alerts: true, schedule: true, grades: true };
+  const isConsultasEnabled = pub.attendance || pub.alerts || pub.schedule || pub.grades;
+
+  useEffect(() => {
+    if (consultasSearchDni.length === 8) {
+      onConsultasSearch(consultasSearchDni);
+      setConsultasSearchDni("");
+      setIsDniInputModalOpen(false);
+    }
+  }, [consultasSearchDni, onConsultasSearch]);
+
+  useEffect(() => {
+    if (asistenciaDni.length === 8) {
+      onMarkAttendance(asistenciaDni, asistenciaType);
+      setAsistenciaDni("");
+    }
+  }, [asistenciaDni, onMarkAttendance, asistenciaType]);
 
   const handleConsultasSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -74,30 +93,41 @@ const Landing: React.FC<LandingProps> = ({ globalConfig, onConsultasSearch, onAd
         </div>
 
         <div className="space-y-6 md:space-y-8 animate-slide-up delay-150 w-full max-w-2xl px-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 md:gap-6">
-            <button 
-              onClick={() => setIsDniInputModalOpen(true)}
-              className="w-full py-6 md:py-10 bg-white border-2 border-slate-100 rounded-[2rem] md:rounded-[3rem] shadow-2xl hover:shadow-blue-200/50 hover:border-blue-200 transition-all group relative overflow-hidden flex flex-col items-center justify-center"
-            >
-              <div className="absolute inset-0 bg-gradient-to-br from-blue-50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
-              <div className="relative z-10 flex flex-col items-center gap-1 md:gap-2 px-4">
-                <Search size={28} md:size={40} style={{ color: globalConfig.theme.primaryColor }} className="mb-1 md:mb-2" />
-                <span className="text-xl md:text-4xl font-black text-slate-800 tracking-tight uppercase leading-tight">Consultas</span>
-                <span className="text-[7px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest">Acceso Público</span>
-              </div>
-            </button>
+          <div className={`grid gap-4 md:gap-6 ${isConsultasEnabled ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1'}`}>
+            <AnimatePresence mode="popLayout">
+              {isConsultasEnabled && (
+                <motion.button 
+                  key="consultas-btn"
+                  initial={{ opacity: 0, scale: 0.9 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.9 }}
+                  transition={{ duration: 0.3, ease: "easeOut" }}
+                  onClick={() => setIsDniInputModalOpen(true)}
+                  className="w-full py-6 md:py-10 bg-white border-2 border-slate-100 rounded-[2rem] md:rounded-[3rem] shadow-2xl hover:shadow-blue-200/50 hover:border-blue-200 transition-all group relative overflow-hidden flex flex-col items-center justify-center"
+                >
+                  <div className="absolute inset-0 bg-gradient-to-br from-blue-50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                  <div className="relative z-10 flex flex-col items-center gap-1 md:gap-2 px-4">
+                    <Search size={28} md:size={40} style={{ color: globalConfig.theme.primaryColor }} className="mb-1 md:mb-2" />
+                    <span className="text-xl md:text-4xl font-black text-slate-800 tracking-tight uppercase leading-tight">Consultas</span>
+                    <span className="text-[7px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest">Acceso Público</span>
+                  </div>
+                </motion.button>
+              )}
 
-            <button 
-              onClick={() => setIsPasswordModalOpen(true)}
-              className="w-full py-6 md:py-10 bg-white border-2 border-slate-100 rounded-[2rem] md:rounded-[3rem] shadow-2xl hover:shadow-emerald-200/50 hover:border-emerald-200 transition-all group relative overflow-hidden flex flex-col items-center justify-center"
-            >
-              <div className="absolute inset-0 bg-gradient-to-br from-emerald-50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
-              <div className="relative z-10 flex flex-col items-center gap-1 md:gap-2 px-4">
-                <Clock size={28} md:size={40} className="text-emerald-600 mb-1 md:mb-2" />
-                <span className="text-xl md:text-4xl font-black text-slate-800 tracking-tight uppercase leading-tight">Asistencia<br/>Rápida</span>
-                <span className="text-[7px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest">Registro Rápido</span>
-              </div>
-            </button>
+              <motion.button 
+                key="asistencia-btn"
+                layout
+                onClick={() => setIsPasswordModalOpen(true)}
+                className="w-full py-6 md:py-10 bg-white border-2 border-slate-100 rounded-[2rem] md:rounded-[3rem] shadow-2xl hover:shadow-emerald-200/50 hover:border-emerald-200 transition-all group relative overflow-hidden flex flex-col items-center justify-center"
+              >
+                <div className="absolute inset-0 bg-gradient-to-br from-emerald-50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                <div className="relative z-10 flex flex-col items-center gap-1 md:gap-2 px-4">
+                  <Clock size={28} md:size={40} className="text-emerald-600 mb-1 md:mb-2" />
+                  <span className="text-xl md:text-4xl font-black text-slate-800 tracking-tight uppercase leading-tight">Asistencia<br/>Rápida</span>
+                  <span className="text-[7px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest">Registro Rápido</span>
+                </div>
+              </motion.button>
+            </AnimatePresence>
           </div>
 
           <div className="flex justify-center gap-6 md:gap-8 pt-4">

@@ -28,7 +28,8 @@ export const DEFAULT_CONFIG = {
     attendance: true,
     alerts: true,
     schedule: true,
-    grades: true
+    grades: true,
+    hideTeacherSchedule: false
   },
   meritCategories: [
     { id: '1', name: 'Valores', points: 5 },
@@ -42,6 +43,12 @@ export const DEFAULT_CONFIG = {
     { id: '2', name: 'Moderada', points: -10 },
     { id: '3', name: 'Grave', points: -20 },
     { id: '4', name: 'Muy Grave', points: -40 }
+  ],
+  periods: [
+    { id: '1', name: '1er Bimestre' },
+    { id: '2', name: '2do Bimestre' },
+    { id: '3', name: '3er Bimestre' },
+    { id: '4', name: '4to Bimestre' }
   ],
   footerText: 'Control y Gestión 2026 © 2024',
   credentialConfig: {

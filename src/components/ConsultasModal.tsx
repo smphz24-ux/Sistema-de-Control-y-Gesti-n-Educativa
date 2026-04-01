@@ -17,11 +17,15 @@ interface ConsultasModalProps {
   pub: any;
   conductActions: ConductAction[];
   grades: Grade[];
+  schoolDays?: string[];
+  gradeLevels?: any[];
+  students?: Student[];
 }
 
 const ConsultasModal: React.FC<ConsultasModalProps> = ({ 
   consultasResult, globalConfig, activeConsultasTab, setActiveConsultasTab, 
-  onClose, attendance, courses, schedules, timeSlots, pub, conductActions, grades
+  onClose, attendance, courses, schedules, timeSlots, pub, conductActions, grades,
+  schoolDays, gradeLevels, students
 }) => {
   const [selectedCourseId, setSelectedCourseId] = useState<string | null>(null);
   const [isFullScreen, setIsFullScreen] = useState(false);
@@ -30,14 +34,30 @@ const ConsultasModal: React.FC<ConsultasModalProps> = ({
   const downloadSchedule = useCallback(async () => {
     if (scheduleRef.current) {
       try {
-        // We capture the inner div which has the full width
-        const dataUrl = await htmlToImage.toJpeg(scheduleRef.current, { 
-          quality: 0.95, 
+        const node = scheduleRef.current;
+        
+        // Calculate dimensions to ensure no cropping
+        // We use a minimum width of 1200px to accommodate all days comfortably
+        const captureWidth = Math.max(node.scrollWidth, 1200);
+        const captureHeight = node.scrollHeight;
+
+        const dataUrl = await htmlToImage.toJpeg(node, { 
+          quality: 1.0, 
           backgroundColor: '#ffffff',
+          pixelRatio: 2, // High resolution
+          width: captureWidth,
+          height: captureHeight,
           style: {
             borderRadius: '0',
             padding: '40px',
-            width: '1000px' // Ensure full width is captured
+            margin: '0',
+            width: `${captureWidth}px`,
+            height: `${captureHeight}px`,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            transform: 'none'
           }
         });
         const link = document.createElement('a');
@@ -67,15 +87,19 @@ const ConsultasModal: React.FC<ConsultasModalProps> = ({
               @page { size: landscape; margin: 1cm; }
               body { -webkit-print-color-adjust: exact; }
             }
-            body { font-family: sans-serif; padding: 20px; }
-            table { width: 100%; border-collapse: collapse; }
+            body { font-family: sans-serif; padding: 20px; display: flex; justify-content: center; }
+            .print-container { width: 100%; max-width: 1200px; }
+            table { width: 100%; border-collapse: collapse; margin: 0 auto; }
             th, td { border: 1px solid #e2e8f0; padding: 8px; text-align: center; }
             .bg-slate-900 { background-color: #0f172a !important; color: white !important; }
             .rounded-xl { border-radius: 0.75rem; }
+            .text-center { text-align: center !important; }
           </style>
         </head>
         <body>
-          ${printContent.innerHTML}
+          <div class="print-container">
+            ${printContent.innerHTML}
+          </div>
         </body>
       </html>
     `);
@@ -87,16 +111,40 @@ const ConsultasModal: React.FC<ConsultasModalProps> = ({
     }, 500);
   };
 
-  // Derive days from schedules if not provided
+  // Derive days from schoolDays or schedules
   const availableDays = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
-  const studentSchedules = (schedules || []).filter(s => s.targetId === consultasResult.gradoId || (s.gradeId === consultasResult.grado && s.section === consultasResult.seccion));
-  const activeDays = availableDays.filter(day => 
-    ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes'].includes(day) || 
-    studentSchedules.some(s => (s.dia || s.day) === day)
-  );
+  
+  // Find the GradeLevel ID for the student to match schedules correctly
+  const studentGradeLevel = gradeLevels?.find(gl => gl.nombre === consultasResult.grado && gl.seccion === consultasResult.seccion);
+  
+  const studentSchedules = (schedules || []).filter(s => {
+    if (consultasResult.rol === 'Docente') {
+      const course = courses.find(c => c.name === s.materia || c.id === (s as any).courseId);
+      return course?.teacherId === consultasResult.id;
+    }
+    return (
+      s.targetId === studentGradeLevel?.id || 
+      s.targetId === (consultasResult as any).gradoId || 
+      ((s as any).gradeId === consultasResult.grado && (s as any).section === consultasResult.seccion)
+    );
+  });
+  
+  // Use schoolDays if provided, otherwise fallback to Mon-Fri + any day with a schedule
+  const activeDays = schoolDays && schoolDays.length > 0 
+    ? schoolDays 
+    : availableDays.filter(day => 
+        ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes'].includes(day) || 
+        studentSchedules.some(s => (s.dia || (s as any).day) === day)
+      );
 
   const studentConductActions = conductActions.filter(a => a.studentId === consultasResult.id);
   const studentGrades = grades.filter(g => g.studentId === consultasResult.id);
+
+  // Filter courses to only those relevant to the student's grade or those they have grades for
+  const relevantCourses = courses.filter(c => 
+    studentSchedules.some(s => s.materia === c.name) || 
+    studentGrades.some(g => g.materia.startsWith(c.name))
+  );
   return (
     <div className={`fixed inset-0 z-[100] flex items-center justify-center p-2 md:p-10 bg-slate-950/90 backdrop-blur-xl animate-fade-in ${isFullScreen ? 'z-[200]' : ''}`}>
       <div className={`bg-white rounded-[2rem] md:rounded-[3rem] shadow-2xl w-full max-w-5xl h-full max-h-[95vh] md:max-h-[90vh] overflow-hidden flex flex-col animate-slide-up relative ${isFullScreen ? 'max-w-full max-h-full rounded-none' : ''}`}>
@@ -132,7 +180,16 @@ const ConsultasModal: React.FC<ConsultasModalProps> = ({
                   </div>
                 </div>
               </div>
-              {consultasResult?.rol !== 'Docente' && (
+              {consultasResult?.rol === 'Docente' ? (
+                <div className="flex bg-white/10 p-1 rounded-lg border border-white/10 overflow-x-auto no-scrollbar relative z-10 w-full md:w-auto justify-start md:justify-center shadow-xl gap-1">
+                  {pub.schedule && pub.hideTeacherSchedule && (
+                    <button 
+                      onClick={() => setActiveConsultasTab('horario')}
+                      className={`flex-1 md:flex-none px-3 md:px-6 py-2 md:py-4 rounded-md md:rounded-xl font-black text-[8px] md:text-[10px] uppercase tracking-widest transition-all whitespace-nowrap ${activeConsultasTab === 'horario' ? 'bg-white text-slate-900 shadow-xl scale-105' : 'text-white/60 hover:text-white'}`}
+                    >Horario del Docente</button>
+                  )}
+                </div>
+              ) : (
                 <div className="flex bg-white/10 p-1 rounded-lg border border-white/10 overflow-x-auto no-scrollbar relative z-10 w-full md:w-auto justify-start md:justify-center shadow-xl gap-1">
                   {pub.attendance && (
                     <button 
@@ -173,14 +230,14 @@ const ConsultasModal: React.FC<ConsultasModalProps> = ({
                     attendance.filter(a => a.studentId === consultasResult.id).map(a => (
                       <div key={a.id} className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm flex justify-between items-center">
                         <div>
-                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{a.date}</p>
-                          <p className="font-bold text-slate-700">{a.time}</p>
+                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{a.fecha}</p>
+                          <p className="font-bold text-slate-700">{a.hora}</p>
                         </div>
                         <span className={`px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest ${
-                          a.status === 'entrada' ? 'bg-emerald-100 text-emerald-600' :
-                          a.status === 'tardanza' ? 'bg-amber-100 text-amber-600' :
+                          a.estado === 'entrada' ? 'bg-emerald-100 text-emerald-600' :
+                          a.estado === 'tardanza' ? 'bg-amber-100 text-amber-600' :
                           'bg-rose-100 text-rose-600'
-                        }`}>{a.status}</span>
+                        }`}>{a.estado}</span>
                       </div>
                     ))
                   ) : (
@@ -300,12 +357,12 @@ const ConsultasModal: React.FC<ConsultasModalProps> = ({
                 </div>
                 <div className={`relative ${isFullScreen ? 'flex-1 overflow-hidden' : ''}`}>
                   <div className={`overflow-x-auto custom-scrollbar pb-4 ${isFullScreen ? 'h-full overflow-y-auto' : ''}`}>
-                    <div className={`min-w-[900px] bg-white p-6 rounded-3xl shadow-sm border border-slate-100 ${isFullScreen ? 'min-w-full' : ''}`} ref={scheduleRef}>
-                      <div className="mb-6 border-b border-slate-100 pb-4">
+                    <div className={`min-w-[900px] bg-white p-6 rounded-3xl shadow-sm border border-slate-100 flex flex-col items-center ${isFullScreen ? 'min-w-full' : ''}`} ref={scheduleRef}>
+                      <div className="mb-6 border-b border-slate-100 pb-4 w-full text-center">
                         <h4 className="text-xl font-black text-slate-900 uppercase tracking-tight">{consultasResult.nombre} {consultasResult.apellido}</h4>
                         <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{consultasResult.grado} "{consultasResult.seccion}" - Horario Escolar</p>
                       </div>
-                      <table className="w-full border-separate border-spacing-2">
+                      <table className="w-full border-separate border-spacing-2 mx-auto">
                         <thead>
                           <tr>
                             <th className="p-3 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center bg-slate-50 rounded-xl">Hora</th>
@@ -321,19 +378,35 @@ const ConsultasModal: React.FC<ConsultasModalProps> = ({
                                 <span className="text-[10px] font-black text-white whitespace-nowrap">{slot.start} - {slot.end}</span>
                               </td>
                               {activeDays.map(day => {
-                                const schedule = (schedules || []).find(s => 
-                                  (s.targetId === consultasResult.gradoId || (s.gradeId === consultasResult.grado && s.section === consultasResult.seccion)) && 
-                                  (s.dia === day || s.day === day) && 
-                                  (s.inicio === slot.start || s.timeSlotId === slot.id)
-                                );
-                                const course = schedule ? courses.find(c => c.name === schedule.materia || c.id === schedule.courseId) : null;
-                                return (
-                                  <td key={day} className="p-1">
-                                    {course ? (
-                                      <div className="p-4 rounded-xl text-white text-center shadow-md h-full flex flex-col justify-center min-h-[60px]" style={{ backgroundColor: course.color || '#3b82f6' }}>
-                                        <p className="text-[10px] font-black uppercase tracking-tight leading-tight">{course.name}</p>
-                                        {course.teacherName && <p className="text-[7px] font-bold opacity-80 mt-1 uppercase">{course.teacherName}</p>}
-                                      </div>
+                                const isDocente = consultasResult.rol === 'Docente';
+                                const schedule = (schedules || []).find(s => {
+                                  if (isDocente) {
+                                    const course = courses.find(c => c.name === s.materia || c.id === (s as any).courseId);
+                                    return course?.teacherId === consultasResult.id && 
+                                           (s.dia === day || (s as any).day === day) && 
+                                           (s.inicio === slot.start || (s as any).timeSlotId === slot.id);
+                                  } else {
+                                    return (s.targetId === studentGradeLevel?.id || s.targetId === (consultasResult as any).gradoId || ((s as any).gradeId === consultasResult.grado && (s as any).section === consultasResult.seccion)) && 
+                                           (s.dia === day || (s as any).day === day) && 
+                                           (s.inicio === slot.start || (s as any).timeSlotId === slot.id);
+                                  }
+                                });
+                                  const course = schedule ? courses.find(c => c.name === schedule.materia || c.id === (schedule as any).courseId) : null;
+                                  const gradeLevel = isDocente && schedule ? gradeLevels.find(gl => gl.id === schedule.targetId) : null;
+                                  const teacher = !isDocente && course && students ? students.find(s => s.id === course.teacherId) : null;
+
+                                  return (
+                                    <td key={day} className="p-1">
+                                      {course ? (
+                                        <div className="p-4 rounded-xl text-white text-center shadow-md h-full flex flex-col justify-center min-h-[60px]" style={{ backgroundColor: course.color || '#3b82f6' }}>
+                                          <p className="text-[10px] font-black uppercase tracking-tight leading-tight">{course.name}</p>
+                                          {isDocente && gradeLevel && (
+                                            <p className="text-[7px] font-bold opacity-80 mt-1 uppercase">{gradeLevel.nombre} "{gradeLevel.seccion}"</p>
+                                          )}
+                                          {!isDocente && teacher && (
+                                            <p className="text-[7px] font-bold opacity-80 mt-1 uppercase">{teacher.nombre} {teacher.apellido}</p>
+                                          )}
+                                        </div>
                                     ) : (
                                       <div className="h-16 bg-slate-50/50 rounded-xl border border-dashed border-slate-200 flex items-center justify-center">
                                         <div className="w-1 h-1 bg-slate-200 rounded-full"></div>
@@ -367,7 +440,7 @@ const ConsultasModal: React.FC<ConsultasModalProps> = ({
                       onClick={() => setSelectedCourseId(null)}
                       className={`px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all ${!selectedCourseId ? 'bg-slate-900 text-white shadow-lg' : 'bg-white text-slate-400 border border-slate-100'}`}
                     >Todos</button>
-                    {courses.map(course => (
+                    {relevantCourses.map(course => (
                       <button 
                         key={course.id}
                         onClick={() => setSelectedCourseId(course.id)}
@@ -378,7 +451,7 @@ const ConsultasModal: React.FC<ConsultasModalProps> = ({
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {courses
+                  {relevantCourses
                     .filter(c => !selectedCourseId || c.id === selectedCourseId)
                     .map(course => {
                       const courseGrades = studentGrades.filter(g => g.materia.startsWith(course.name));
@@ -411,7 +484,10 @@ const ConsultasModal: React.FC<ConsultasModalProps> = ({
                                   <div key={g.id} className="p-3 flex justify-between items-center">
                                     <div className="flex items-center gap-3">
                                       <FileText size={14} className="text-slate-300" />
-                                      <p className="text-[10px] font-bold text-slate-600 uppercase">{g.materia.split('(')[1]?.replace(')', '') || 'Nota'}</p>
+                                      <div className="flex flex-col">
+                                        <p className="text-[10px] font-black text-slate-800 uppercase tracking-tight">{g.examType || 'Nota'}</p>
+                                        <p className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">{g.periodo || 'Periodo'}</p>
+                                      </div>
                                     </div>
                                     <div className="flex items-center gap-3">
                                       <p className="text-[9px] font-bold text-slate-400">{g.fecha}</p>

@@ -8,6 +8,11 @@ export interface CredentialConfig {
   height: number; // in mm
 }
 
+export interface Period {
+  id: string;
+  name: string;
+}
+
 export interface UserConfig {
   siteName: string;
   slogan?: string;
@@ -22,9 +27,11 @@ export interface UserConfig {
     alerts: boolean;
     schedule: boolean;
     grades: boolean;
+    hideTeacherSchedule?: boolean;
   };
   meritCategories?: MeritCategory[];
   demeritCategories?: DemeritCategory[];
+  periods?: Period[];
   footerText?: string;
   credentialConfig?: CredentialConfig;
 }
@@ -36,10 +43,11 @@ export interface AppUser {
   fullName?: string;
   whatsapp?: string;
   email?: string;
-  role: 'admin' | 'staff';
+  role: 'admin' | 'staff' | 'enrolador';
   permissions: string[];
   config?: UserConfig;
   parentId?: string;
+  studentId?: string;
 }
 
 export interface Student {
@@ -93,8 +101,32 @@ export interface Grade {
   studentId: string;
   studentName: string;
   materia: string;
+  examType?: string;
   nota: number;
   fecha: string;
+  periodo?: string;
+  buenas?: number;
+  malas?: number;
+  blancas?: number;
+  maxScore?: number;
+  pointsPerGood?: number;
+  pointsPerBad?: number;
+  pointsPerBlank?: number;
+  numQuestions?: number;
+  isIndispensable?: boolean;
+  divisor?: number;
+}
+
+export interface ExamType {
+  id: string;
+  name: string;
+  maxScore: number;
+  pointsPerGood: number;
+  pointsPerBad: number;
+  pointsPerBlank: number;
+  numQuestions: number;
+  isIndispensable: boolean;
+  divisor: number;
 }
 
 export interface Level {
@@ -193,10 +225,10 @@ export interface Course {
 
 export interface TimeSlot {
   id: string;
-  targetId: string;
-  type: 'clase' | 'laboral';
-  dia: string;
-  inicio: string;
-  fin: string;
+  targetId?: string;
+  type?: 'clase' | 'laboral';
+  dia?: string;
+  start: string;
+  end: string;
   materia?: string;
 }

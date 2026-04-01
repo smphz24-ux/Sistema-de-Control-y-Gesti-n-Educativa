@@ -1,5 +1,6 @@
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import debounce from 'lodash.debounce';
 import { createRoot } from 'react-dom/client';
 import * as htmlToImage from 'html-to-image';
 import { 
@@ -61,10 +62,11 @@ import JSZip from 'jszip';
 import * as XLSX from 'xlsx';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import jsQR from 'jsqr';
 
 import { 
   AppUser, UserConfig, Student, ConsultationLog, AttendanceStatus, 
-  Attendance, Grade, Level, GradeLevel, Shift, Schedule, 
+  Attendance, Grade, ExamType, Level, GradeLevel, Shift, Schedule, 
   IncidenceSeverity, IncidenceStatus, Incidence, IncidenceType, AppNotification,
   MeritCategory, DemeritCategory, ConductAction
 } from './types';
@@ -79,9 +81,6 @@ import Login from './components/Login';
 import AdminLoginModal from './components/AdminLoginModal';
 
 // Declaration for jsQR which is loaded via CDN in index.html
-declare var jsQR: any;
-declare var jspdf: any;
-
 const ALL_PERMISSIONS = ['dashboard', 'estudiantes', 'asistencia', 'reportes', 'alerta', 'calificaciones', 'mi-panel', 'config', 'horarios', 'mi-panel:grados', 'mi-panel:alerta', 'mi-panel:horario'];
 
 const App = () => {
@@ -101,19 +100,61 @@ const App = () => {
     return DEFAULT_CONFIG;
   });
 
+  const [selectedGradeName, setSelectedGradeName] = useState<string>('');
+
+  useEffect(() => {
+    const loadConfig = async () => {
+      try {
+        const config = await api.fetchConfig();
+        if (config) {
+          isRemoteUpdate.current = true;
+          setGlobalConfig(config);
+          setTimeout(() => isRemoteUpdate.current = false, 100);
+        }
+      } catch (e) {
+        console.error("Error loading config", e);
+      }
+    };
+    loadConfig();
+  }, []);
+
+  const debouncedSaveConfig = useMemo(
+    () => debounce((config: any) => {
+      api.saveConfig(config);
+      
+      // Broadcast to other clients
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${protocol}//${window.location.host}`;
+      const socket = new WebSocket(wsUrl);
+      socket.onopen = () => {
+        socket.send(JSON.stringify({ type: 'config_update', data: config }));
+        socket.close();
+      };
+    }, 1000),
+    []
+  );
+
+  useEffect(() => {
+    if (!isRemoteUpdate.current) {
+      localStorage.setItem('edu_config_v10', JSON.stringify(globalConfig));
+      debouncedSaveConfig(globalConfig);
+    }
+  }, [globalConfig, debouncedSaveConfig]);
+
   const [isBoletaModalOpen, setIsBoletaModalOpen] = useState(false);
   const [isAdminScheduleFullScreen, setIsAdminScheduleFullScreen] = useState(false);
   const [activeTab, setActiveTab] = useState<'dashboard' | 'estudiantes' | 'asistencia' | 'calificaciones' | 'reportes' | 'alerta' | 'mi-panel' | 'config'>('dashboard');
-  const [activeConfigSubTab, setActiveConfigSubTab] = useState<'usuarios' | 'sistema' | 'credenciales'>('usuarios');
+  const [activeConfigSubTab, setActiveConfigSubTab] = useState<'usuarios' | 'sistema'>('usuarios');
   const [activeReportSubTab, setActiveReportSubTab] = useState<'global' | 'personalizado'>('global');
   const [activeAlertaSubTab, setActiveAlertaSubTab] = useState<'registro' | 'historial'>('registro');
   const [activePanelSubTab, setActivePanelSubTab] = useState<'perfil' | 'grados' | 'horarios' | 'alerta' | 'profesores'>('perfil');
-  const [activeGradosSubTab, setActiveGradosSubTab] = useState<'niveles' | 'grados' | 'secciones'>('niveles');
+  const [activeGradosSubTab, setActiveGradosSubTab] = useState<'niveles' | 'grados' | 'secciones' | 'periodos'>('niveles');
   const [activeHorariosSubTab, setActiveHorariosSubTab] = useState<'turnos' | 'config' | 'creador' | 'materias'>('turnos');
-  const [panelModalType, setPanelModalType] = useState<'level' | 'grade' | 'shift' | 'schedule' | 'profile' | 'report' | 'siteConfig' | 'section' | null>(null);
+  const [panelModalType, setPanelModalType] = useState<'level' | 'grade' | 'shift' | 'schedule' | 'profile' | 'report' | 'siteConfig' | 'section' | 'period' | null>(null);
   const [editingSection, setEditingSection] = useState<string | null>(null);
   const [editingLevel, setEditingLevel] = useState<Level | null>(null);
   const [editingGradeLevel, setEditingGradeLevel] = useState<GradeLevel | null>(null);
+  const [editingPeriod, setEditingPeriod] = useState<Period | null>(null);
   const [confirmModal, setConfirmModal] = useState<{
     title: string;
     message: string;
@@ -140,7 +181,7 @@ const App = () => {
       end: `${(8 + i).toString().padStart(2, '0')}:00`
     }))
   );
-  const [activeCalificacionesSubTab, setActiveCalificacionesSubTab] = useState<'lista' | 'registros' | 'boletas'>('lista');
+  const [activeCalificacionesSubTab, setActiveCalificacionesSubTab] = useState<'lista' | 'registros' | 'boletas' | 'calificar'>('lista');
   const [draggedSchedule, setDraggedSchedule] = useState<Schedule | null>(null);
   const [calificacionesGradeFilter, setCalificacionesGradeFilter] = useState("");
   const [calificacionesLevelFilter, setCalificacionesLevelFilter] = useState("");
@@ -154,13 +195,22 @@ const App = () => {
   const handleDownloadAdminSchedule = useCallback(async () => {
     if (adminScheduleRef.current) {
       try {
-        const dataUrl = await htmlToImage.toJpeg(adminScheduleRef.current, { 
-          quality: 0.95, 
+        const node = adminScheduleRef.current;
+        const captureWidth = 1300;
+        const captureHeight = node.scrollHeight;
+
+        const dataUrl = await htmlToImage.toJpeg(node, { 
+          quality: 1.0, 
           backgroundColor: '#ffffff',
+          pixelRatio: 2, // High resolution
+          width: captureWidth,
+          height: captureHeight,
           style: {
             padding: '40px',
             borderRadius: '0',
-            width: '1300px' // Ensure full width is captured
+            width: `${captureWidth}px`,
+            height: `${captureHeight}px`,
+            margin: '0 auto'
           }
         });
         const link = document.createElement('a');
@@ -246,6 +296,8 @@ const App = () => {
   const [sections, setSections] = useState<string[]>(['A', 'B', 'C', 'D', 'E']);
   const [schoolDays, setSchoolDays] = useState<string[]>(['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes']);
   const [scheduleGradeFilter, setScheduleGradeFilter] = useState<string>('');
+  const [scheduleSectionFilter, setScheduleSectionFilter] = useState<string>('');
+  const [scheduleTeacherFilter, setScheduleTeacherFilter] = useState<string>('');
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [incidences, setIncidences] = useState<Incidence[]>([]);
@@ -287,6 +339,40 @@ const App = () => {
   // Personal Report State
   const [personalSearchTerm, setPersonalSearchTerm] = useState("");
   const [selectedPersonalStudent, setSelectedPersonalStudent] = useState<Student | null>(null);
+
+  // Calificar Section State
+  const [calificarSearchDni, setCalificarSearchDni] = useState("");
+  const [selectedCalificarStudent, setSelectedCalificarStudent] = useState<Student | null>(null);
+  const [selectedExamType, setSelectedExamType] = useState("");
+  const [buenas, setBuenas] = useState<number>(0);
+  const [malas, setMalas] = useState<number>(0);
+  const [blancas, setBlancas] = useState<number>(0);
+  const [selectedCalificarMateria, setSelectedCalificarMateria] = useState("");
+  const [selectedCalificarPeriodo, setSelectedCalificarPeriodo] = useState("");
+  const [examTypes, setExamTypes] = useState<ExamType[]>([
+    { id: '1', name: 'Tarea', maxScore: 20, pointsPerGood: 2, pointsPerBad: 0, pointsPerBlank: 0, numQuestions: 10, isIndispensable: false, divisor: 1 },
+    { id: '2', name: 'Examen Parcial', maxScore: 20, pointsPerGood: 1, pointsPerBad: -0.25, pointsPerBlank: 0, numQuestions: 20, isIndispensable: true, divisor: 1 },
+    { id: '3', name: 'Examen Final', maxScore: 20, pointsPerGood: 1, pointsPerBad: -0.25, pointsPerBlank: 0, numQuestions: 20, isIndispensable: true, divisor: 1 },
+    { id: '4', name: 'Participación', maxScore: 20, pointsPerGood: 1, pointsPerBad: 0, pointsPerBlank: 0, numQuestions: 20, isIndispensable: false, divisor: 1 }
+  ]);
+  const [editingExamType, setEditingExamType] = useState<ExamType | null>(null);
+  const [isExamTypeModalOpen, setIsExamTypeModalOpen] = useState(false);
+
+  const calculatedScore = useMemo(() => {
+    const currentExamType = examTypes.find(t => t.name === selectedExamType);
+    if (!currentExamType) return { rawScore: 0, finalGrade: 0 };
+
+    // Calculate raw score based on answers and points
+    const rawScore = (buenas * (currentExamType.pointsPerGood || 0)) + 
+                     (malas * (currentExamType.pointsPerBad || 0)) + 
+                     (blancas * (currentExamType.pointsPerBlank || 0));
+    
+    // Calculate final grade using divisor
+    const divisor = currentExamType.divisor || 1;
+    const finalGrade = Math.max(0, Math.min(20, rawScore / divisor));
+    
+    return { rawScore, finalGrade };
+  }, [selectedExamType, buenas, malas, blancas, examTypes]);
 
   // Attendance Filters
   const [attSearch, setAttSearch] = useState("");
@@ -388,6 +474,8 @@ const App = () => {
       if (!serverUsers || serverUsers.length === 0) {
         setUsers([defaultAdmin]);
         await api.saveUsers([defaultAdmin]);
+        // Load data for default admin to enable public features
+        await loadUserData(defaultAdmin);
       } else {
         const updatedUsers = serverUsers.map((u: AppUser) => {
           if (u.role === 'admin') {
@@ -397,25 +485,32 @@ const App = () => {
         });
         
         const hasAdmin = updatedUsers.some((u: AppUser) => u.role === 'admin');
+        const firstAdmin = updatedUsers.find((u: AppUser) => u.role === 'admin') || defaultAdmin;
+
         if (!hasAdmin) {
           const finalUsers = [defaultAdmin, ...updatedUsers];
           setUsers(finalUsers);
           await api.saveUsers(finalUsers);
+          await loadUserData(defaultAdmin);
         } else {
           setUsers(updatedUsers);
           // Save updated permissions if they changed
           if (JSON.stringify(updatedUsers) !== JSON.stringify(serverUsers)) {
             await api.saveUsers(updatedUsers);
           }
+          // Load data for the first admin to enable public features
+          await loadUserData(firstAdmin);
         }
       }
     } catch (e) {
       console.error("Error loading initial data", e);
+      setToast({ message: "Error al conectar con el servidor. Verifique su conexión.", type: 'error' });
     }
   };
 
   const loadUserData = async (user: AppUser) => {
     try {
+      isRemoteUpdate.current = true;
       const ownerId = user.parentId || user.id;
       const data = await api.fetchUserData(ownerId);
       if (data && Object.keys(data).length > 0) {
@@ -455,15 +550,21 @@ const App = () => {
         setConsultationLogs(data.consultationLogs || []);
         setConductActions(data.conductActions || []);
       }
+      setTimeout(() => { isRemoteUpdate.current = false; }, 500);
     } catch (e) {
       console.error("Error loading user data", e);
+      setToast({ message: "Error al cargar datos de usuario. Verifique su conexión.", type: 'error' });
+      isRemoteUpdate.current = false;
     }
   };
 
   const saveUserData = async () => {
-    if (!isAuthenticated || !currentUser) return;
+    // If not authenticated, we save to the first admin's data to support public features
+    const firstAdmin = users.find(u => u.role === 'admin');
+    if (!isAuthenticated && !firstAdmin) return;
+    
     try {
-      const ownerId = currentUser.parentId || currentUser.id;
+      const ownerId = currentUser ? (currentUser.parentId || currentUser.id) : firstAdmin!.id;
       const dataToSave = {
         students,
         attendance,
@@ -485,6 +586,7 @@ const App = () => {
       await api.saveUserData(ownerId, dataToSave);
     } catch (e) {
       console.error("Error saving user data", e);
+      setToast({ message: "Error al guardar datos. Verifique su conexión.", type: 'error' });
     }
   };
 
@@ -522,7 +624,7 @@ const App = () => {
       })
       .sort((a, b) => boletasSortOrder === 'merito' ? b.average - a.average : a.average - b.average);
 
-    const doc = new (window as any).jspdf.jsPDF();
+    const doc = new jsPDF();
     
     // Add Title
     doc.setFontSize(18);
@@ -542,7 +644,7 @@ const App = () => {
       s.conduct.toFixed(2)
     ]);
 
-    (doc as any).autoTable({
+    autoTable(doc, {
       startY: 45,
       head: [['Puesto', 'Alumno', 'DNI', 'Grado/Sección', 'Nivel', 'Promedio', 'Conducta']],
       body: tableData,
@@ -621,11 +723,7 @@ const App = () => {
         }
       });
       
-      const doc = new jsPDF({
-        orientation: 'portrait',
-        unit: 'mm',
-        format: 'a4'
-      });
+      const doc = new jsPDF();
       
       const imgProps = doc.getImageProperties(dataUrl);
       const pdfWidth = doc.internal.pageSize.getWidth();
@@ -732,7 +830,9 @@ const App = () => {
           if (data.conductActions) setConductActions(data.conductActions);
           setTimeout(() => { isRemoteUpdate.current = false; }, 100);
         } else if (message.type === 'config_update' && message.data) {
+          isRemoteUpdate.current = true;
           setGlobalConfig(message.data);
+          setTimeout(() => { isRemoteUpdate.current = false; }, 100);
         } else if (message.type === 'users_update' && message.data) {
           isRemoteUpdate.current = true;
           setUsers(message.data);
@@ -755,22 +855,37 @@ const App = () => {
   }, [isAuthenticated, currentUser?.id]);
 
   useEffect(() => {
-    if (isAuthenticated && currentUser && !isRemoteUpdate.current) {
-      const timer = setTimeout(() => {
-        saveUserData();
-      }, 1000);
-      return () => clearTimeout(timer);
+    if (!isRemoteUpdate.current) {
+      // If authenticated, save normally. If not, only save if we have users loaded (to get the first admin)
+      if (isAuthenticated && currentUser) {
+        const timer = setTimeout(() => {
+          saveUserData();
+        }, 1000);
+        return () => clearTimeout(timer);
+      } else if (!isAuthenticated && users.length > 0) {
+        // Only save if we are on landing page and something changed
+        const timer = setTimeout(() => {
+          saveUserData();
+        }, 1000);
+        return () => clearTimeout(timer);
+      }
     }
   }, [students, attendance, grades, incidences, courses, gradeLevels, schedules, shifts, sections, levels, consultationLogs, conductActions, gradeTypes, timeSlots, schoolDays, incidenceTypes]);
 
   useEffect(() => {
     if (users.length > 0 && !isRemoteUpdate.current) {
-      api.saveUsers(users);
+      api.saveUsers(users).catch(e => {
+        console.error("Error saving users", e);
+        setToast({ message: "Error al guardar usuarios. Verifique su conexión.", type: 'error' });
+      });
     }
   }, [users]);
 
   useEffect(() => {
-    api.saveConfig(globalConfig);
+    api.saveConfig(globalConfig).catch(e => {
+      console.error("Error saving config", e);
+      setToast({ message: "Error al guardar configuración. Verifique su conexión.", type: 'error' });
+    });
   }, [globalConfig]);
 
   // --- Dynamic Theme Application ---
@@ -828,59 +943,51 @@ const App = () => {
       return;
     }
 
-    const today = new Date().toLocaleDateString();
-    const now = new Date().toLocaleTimeString();
+    const nowFull = new Date();
+    const today = nowFull.toLocaleDateString();
+    const nowTime = nowFull.toLocaleTimeString();
+    const currentMinute = nowFull.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     
-    // Check if there's already a record for this person today
-    const existingIndex = attendance.findIndex(a => 
-      a.studentDni === dni && 
-      a.fecha === today
-    );
+    const isEntry = status === 'entrada' || status === 'tardanza';
+    const isExit = status === 'salida';
 
-    if (existingIndex !== -1) {
-      const existing = attendance[existingIndex];
-      
-      if (status === 'entrada' || status === 'tardanza') {
-        if (existing.horaEntrada) {
-          setToast({ message: `Ya se registró el ingreso para ${person.nombre} hoy a las ${existing.horaEntrada}`, type: 'error' });
-          if (markingInputRef.current) markingInputRef.current.value = '';
-          setIsDniModalOpen(false);
-          return;
-        }
-        // Update entry in existing record
-        const newAttendance = [...attendance];
-        newAttendance[existingIndex] = { ...existing, estado: status, horaEntrada: now, hora: now };
-        setAttendance(newAttendance);
-        setToast({ message: `Ingreso registrado: ${person.nombre}`, type: 'success' });
-      } 
-      else if (status === 'salida') {
-        if (existing.horaSalida) {
-          setToast({ message: `Ya se registró la salida para ${person.nombre} hoy a las ${existing.horaSalida}`, type: 'error' });
-          if (markingInputRef.current) markingInputRef.current.value = '';
-          setIsDniModalOpen(false);
-          return;
-        }
-        if (!existing.horaEntrada) {
-          setToast({ message: `Debe registrar un ingreso antes de marcar la salida`, type: 'error' });
-          if (markingInputRef.current) markingInputRef.current.value = '';
-          setIsDniModalOpen(false);
-          return;
-        }
-        const newAttendance = [...attendance];
-        newAttendance[existingIndex] = { ...existing, estado: status, horaSalida: now, hora: now };
-        setAttendance(newAttendance);
-        setToast({ message: `Salida registrada: ${person.nombre}`, type: 'success' });
+    // Find the last record for today to see if we should update it or create a new one
+    const todayRecords = attendance.filter(a => a.studentDni === dni && a.fecha === today);
+    const lastRecord = todayRecords.length > 0 ? todayRecords[0] : null; // attendance is sorted by newest first
+
+    // If we have a record today and it's missing the exit, OR if we are trying to mark an entry but the last record is already complete
+    if (lastRecord && (!lastRecord.horaSalida || !isEntry)) {
+      // Prevent duplicate in same minute
+      if (lastRecord.hora.includes(currentMinute)) {
+        setToast({ message: `Ya se registró un movimiento para ${person.nombre} en este minuto.`, type: 'error' });
+        if (markingInputRef.current) markingInputRef.current.value = '';
+        setIsDniModalOpen(false);
+        return;
       }
-      else {
-        // Permiso or other
-        const newAttendance = [...attendance];
-        newAttendance[existingIndex] = { ...existing, estado: status, hora: now };
-        setAttendance(newAttendance);
-        setToast({ message: `${status.toUpperCase()} registrada: ${person.nombre}`, type: 'success' });
+
+      // If marking exit, must have an entry in the current record
+      if (isExit && !lastRecord.horaEntrada) {
+        setToast({ message: `Debe registrar un ingreso antes de marcar la salida`, type: 'error' });
+        if (markingInputRef.current) markingInputRef.current.value = '';
+        setIsDniModalOpen(false);
+        return;
       }
+
+      const updatedRecord: Attendance = { 
+        ...lastRecord, 
+        estado: status, 
+        hora: nowTime,
+        horaEntrada: isEntry ? nowTime : lastRecord.horaEntrada,
+        horaSalida: isEntry ? lastRecord.horaSalida : (isExit ? nowTime : lastRecord.horaSalida)
+      };
+
+      const newAttendance = attendance.map(a => a.id === lastRecord.id ? updatedRecord : a);
+      setAttendance(newAttendance);
+      setToast({ message: `${status.toUpperCase()} registrada: ${person.nombre}`, type: 'success' });
+
     } else {
-      // No record today
-      if (status === 'salida') {
+      // No record today OR last record is complete and we are marking a new entry
+      if (isExit) {
         setToast({ message: `Debe registrar un ingreso antes de marcar la salida`, type: 'error' });
         if (markingInputRef.current) markingInputRef.current.value = '';
         setIsDniModalOpen(false);
@@ -895,9 +1002,9 @@ const App = () => {
         studentRol: person.rol,
         estado: status,
         fecha: today,
-        hora: now,
-        horaEntrada: (status === 'entrada' || status === 'tardanza') ? now : undefined,
-        horaSalida: undefined, // status === 'salida' is handled above and returns
+        hora: nowTime,
+        horaEntrada: isEntry ? nowTime : undefined,
+        horaSalida: undefined,
       };
       setAttendance([newEntry, ...attendance]);
       setToast({ message: `${status.toUpperCase()} registrada: ${person.nombre}`, type: 'success' });
@@ -905,7 +1012,7 @@ const App = () => {
 
     if (markingInputRef.current) markingInputRef.current.value = '';
     if (isDniModalOpen) setIsDniModalOpen(false);
-  }, [students, attendance, isDniModalOpen]);
+  }, [students, attendance, isDniModalOpen, activeConfig.siteName]);
 
   // --- QR Scanner Logic ---
   const stopScanner = useCallback(() => {
@@ -1080,7 +1187,8 @@ const App = () => {
       role: role,
       permissions: permissions,
       config: editingUser?.config,
-      parentId: editingUser ? editingUser.parentId : (currentUser?.role === 'admin' && !currentUser.parentId ? undefined : currentUser?.id)
+      parentId: editingUser ? editingUser.parentId : (currentUser?.role === 'admin' && !currentUser.parentId ? undefined : currentUser?.id),
+      studentId: formData.get('studentId') as string || undefined
     };
 
     if (!isNewUser) {
@@ -1596,7 +1704,7 @@ const App = () => {
   };
 
   const exportToPDF = (data: any[], title: string) => {
-    const doc = new jspdf.jsPDF();
+    const doc = new jsPDF();
     const config = currentUser?.config || globalConfig;
     
     // Header
@@ -1640,7 +1748,7 @@ const App = () => {
       item.fecha || '-'
     ]);
     
-    doc.autoTable({
+    autoTable(doc, {
       startY: 50,
       head: [['Nombre', 'DNI', 'Rol', 'Entrada', 'Salida', 'Fecha']],
       body: tableData,
@@ -1652,7 +1760,7 @@ const App = () => {
   };
 
   const exportPersonalReportToPDF = (student: Student, attendanceData: Attendance[], stats: any) => {
-    const doc = new jspdf.jsPDF();
+    const doc = new jsPDF();
     const config = currentUser?.config || globalConfig;
     
     // Header
@@ -1701,7 +1809,7 @@ const App = () => {
       ["Faltas (Ausente)", stats.faltas]
     ];
 
-    doc.autoTable({
+    autoTable(doc, {
       startY: 90,
       head: [['Concepto', 'Cantidad']],
       body: statsData,
@@ -1712,8 +1820,8 @@ const App = () => {
 
     // Detailed History
     doc.setFont("helvetica", "bold");
-    doc.text("HISTORIAL DETALLADO POR FECHA", 15, doc.lastAutoTable.finalY + 15);
-    doc.line(15, doc.lastAutoTable.finalY + 17, 195, doc.lastAutoTable.finalY + 17);
+    doc.text("HISTORIAL DETALLADO POR FECHA", 15, (doc as any).lastAutoTable.finalY + 15);
+    doc.line(15, (doc as any).lastAutoTable.finalY + 17, 195, (doc as any).lastAutoTable.finalY + 17);
 
     const historyData = attendanceData
       .sort((a, b) => {
@@ -1728,8 +1836,8 @@ const App = () => {
         record.estado.toUpperCase()
       ]);
 
-    doc.autoTable({
-      startY: doc.lastAutoTable.finalY + 20,
+    autoTable(doc, {
+      startY: (doc as any).lastAutoTable.finalY + 20,
       head: [['Fecha', 'Ingreso', 'Salida', 'Estado']],
       body: historyData,
       theme: 'grid',
@@ -1789,26 +1897,28 @@ const App = () => {
       
       return matchesSearch && matchesClass && matchesRole;
     }).map(student => {
-      // Find attendance for this student on the selected date
+      const targetDate = new Date(reportDateFilter + 'T12:00:00').toLocaleDateString();
       const record = attendance.find(a => a.studentDni === student.dni && a.fecha === targetDate);
       
       return {
         ...student,
-        record
+        record: record ? {
+          horaEntrada: record.horaEntrada,
+          horaSalida: record.horaSalida,
+          estado: record.estado
+        } : undefined
       };
     }).sort((a, b) => {
-      if (!a.record?.horaEntrada && !b.record?.horaEntrada) return 0;
-      if (!a.record?.horaEntrada) return 1;
-      if (!b.record?.horaEntrada) return -1;
-      // Sort by arrival time
-      return a.record.horaEntrada.localeCompare(b.record.horaEntrada);
+      const timeA = a.record?.horaEntrada || "99:99:99";
+      const timeB = b.record?.horaEntrada || "99:99:99";
+      return timeA.localeCompare(timeB);
     });
   }, [students, attendance, reportSearchTerm, reportClassFilter, reportDateFilter, reportRoleFilter]);
 
   const reportStats = useMemo(() => {
     const studentsCount = filteredReportData.filter(i => i.rol === 'Estudiante').length;
     const teachersCount = filteredReportData.filter(i => i.rol === 'Docente').length;
-    const presentCount = filteredReportData.filter(i => i.record).length;
+    const presentCount = filteredReportData.filter(i => i.record?.estado).length;
     return { studentsCount, teachersCount, presentCount };
   }, [filteredReportData]);
 
@@ -1819,8 +1929,8 @@ const App = () => {
   }, [activeTab, isAuthenticated, isScannerModalOpen, stopScanner]);
 
   const handleConsultasSearch = (dni: string) => {
-    const pub = globalConfig.publicModules || { attendance: true, alerts: true, schedule: true };
-    if (!pub.attendance && !pub.alerts && !pub.schedule) {
+    const pub = globalConfig.publicModules || { attendance: true, alerts: true, schedule: true, grades: true };
+    if (!pub.attendance && !pub.alerts && !pub.schedule && !pub.grades) {
       setToast({ message: "El acceso público está deshabilitado por el administrador.", type: 'error' });
       return;
     }
@@ -1851,6 +1961,7 @@ const App = () => {
         if (pub.attendance) setActiveConsultasTab('asistencia');
         else if (pub.alerts) setActiveConsultasTab('alerta');
         else if (pub.schedule) setActiveConsultasTab('horario');
+        else if (pub.grades) setActiveConsultasTab('notas');
       }
     } else {
       setToast({ message: "No se encontró ningún estudiante con ese DNI.", type: 'error' });
@@ -1942,6 +2053,32 @@ const App = () => {
 
   return (
     <>
+      <style>
+        {`
+          @media print {
+            body * {
+              visibility: hidden;
+            }
+            #boleta-generada, #boleta-generada * {
+              visibility: visible;
+            }
+            #boleta-generada {
+              position: absolute;
+              left: 0;
+              top: 0;
+              width: 100%;
+              margin: 0;
+              padding: 0;
+              border: none;
+              box-shadow: none;
+              background: white;
+            }
+            .no-print {
+              display: none !important;
+            }
+          }
+        `}
+      </style>
       {showLanding ? (
         <Landing 
           globalConfig={globalConfig}
@@ -3022,6 +3159,10 @@ const App = () => {
                      onClick={() => setActiveCalificacionesSubTab('boletas')}
                      className={`px-6 py-3 rounded-xl font-black text-xs uppercase tracking-widest transition-all ${activeCalificacionesSubTab === 'boletas' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-slate-600'}`}
                    >Boletas</button>
+                   <button 
+                     onClick={() => setActiveCalificacionesSubTab('calificar')}
+                     className={`px-6 py-3 rounded-xl font-black text-xs uppercase tracking-widest transition-all ${activeCalificacionesSubTab === 'calificar' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-slate-600'}`}
+                   >Calificar</button>
                  </div>
                </div>
 
@@ -3188,6 +3329,214 @@ const App = () => {
                   className="w-full text-white py-6 rounded-2xl font-black text-xl transition-all uppercase tracking-widest shadow-xl hover:scale-[1.02] active:scale-95"
                   style={{ backgroundColor: activeConfig.theme.primaryColor }}
                 >Registrar Nota</button>
+             </div>
+           )}
+
+           {activeCalificacionesSubTab === 'calificar' && (
+             <div className="bg-white rounded-[2rem] md:rounded-[3rem] p-6 md:p-10 shadow-2xl border-t-4 border-t-blue-600 max-w-4xl mx-auto">
+               <div className="flex flex-col md:flex-row justify-between items-center gap-6 mb-10">
+                 <div>
+                   <h3 className="text-2xl font-black text-slate-800 uppercase tracking-tight">Calificar Alumno</h3>
+                   <p className="text-slate-500 mt-1">Registro de notas mediante conteo de respuestas.</p>
+                 </div>
+               </div>
+
+               <div className="space-y-8">
+                 {/* Student Search */}
+                 <div className="space-y-4">
+                   <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">Buscar Alumno por DNI</label>
+                   <div className="flex gap-3">
+                     <div className="relative flex-1">
+                       <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                       <input 
+                         type="text" 
+                         placeholder="Ingrese DNI..." 
+                         value={calificarSearchDni}
+                         onChange={(e) => {
+                           setCalificarSearchDni(e.target.value);
+                           if (e.target.value.length === 8) {
+                             const student = students.find(s => s.dni === e.target.value);
+                             if (student) setSelectedCalificarStudent(student);
+                           }
+                         }}
+                         className="w-full pl-12 p-4 rounded-2xl bg-slate-50 border-none font-bold text-slate-800 text-lg shadow-inner outline-none focus:ring-2 focus:ring-blue-500"
+                       />
+                     </div>
+                     <button 
+                       onClick={() => {
+                         const student = students.find(s => s.dni === calificarSearchDni);
+                         if (student) setSelectedCalificarStudent(student);
+                         else setToast({ message: "No se encontró el alumno", type: 'error' });
+                       }}
+                       className="bg-slate-900 text-white px-8 py-4 rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-slate-800 transition-all shadow-lg"
+                     >
+                       Buscar
+                     </button>
+                   </div>
+                 </div>
+
+                 {selectedCalificarStudent && (
+                   <div className="animate-fade-in space-y-8">
+                     {/* Student Info Card */}
+                     <div className="bg-blue-50 p-6 rounded-3xl border border-blue-100 flex items-center gap-6">
+                       <div className="w-20 h-20 rounded-2xl bg-white p-1 shadow-md">
+                         <div className="w-full h-full rounded-xl bg-slate-100 flex items-center justify-center overflow-hidden">
+                           {selectedCalificarStudent.foto ? <img src={selectedCalificarStudent.foto} className="w-full h-full object-cover" /> : <User size={32} className="text-slate-300" />}
+                         </div>
+                       </div>
+                       <div>
+                         <h4 className="text-xl font-black text-slate-800 uppercase tracking-tight">{selectedCalificarStudent.nombre} {selectedCalificarStudent.apellido}</h4>
+                         <p className="text-xs font-bold text-slate-500 uppercase">{selectedCalificarStudent.grado} "{selectedCalificarStudent.seccion}" - {selectedCalificarStudent.nivel}</p>
+                       </div>
+                       <button 
+                         onClick={() => setSelectedCalificarStudent(null)}
+                         className="ml-auto text-slate-400 hover:text-rose-600 transition-colors"
+                       >
+                         <X size={24} />
+                       </button>
+                     </div>
+
+                     {/* Grading Form */}
+                     <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                       <div className="space-y-6">
+                         <div className="space-y-2">
+                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+                             <div className="space-y-2">
+                               <select 
+                                 className="w-full p-4 rounded-2xl bg-slate-50 border-none font-bold text-slate-800 text-sm shadow-inner outline-none focus:ring-2 focus:ring-blue-500"
+                               >
+
+                                 {Array.from(new Set(schedules.filter(s => s.materia).map(s => s.materia))).map(m => (
+                                   <option key={m} value={m}>{m}</option>
+                                 ))}
+                               </select>
+                             </div>
+                             <div className="space-y-2">
+                               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">Periodo / Bimestre</label>
+                               <select 
+                                 value={selectedCalificarPeriodo}
+                                 onChange={(e) => setSelectedCalificarPeriodo(e.target.value)}
+                                 className="w-full p-4 rounded-2xl bg-slate-50 border-none font-bold text-slate-800 text-sm shadow-inner outline-none focus:ring-2 focus:ring-blue-500"
+                               >
+                                 <option value="">Seleccione Periodo...</option>
+                                 <option value="1er Bimestre">1er Bimestre</option>
+                                 <option value="2do Bimestre">2do Bimestre</option>
+                                 <option value="3er Bimestre">3er Bimestre</option>
+                                 <option value="4to Bimestre">4to Bimestre</option>
+                               </select>
+                             </div>
+                           </div>
+                           <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">Tipo de Examen</label>
+                           <select 
+                             value={selectedExamType}
+                             onChange={(e) => {
+                               setSelectedExamType(e.target.value);
+                               const type = examTypes.find(t => t.name === e.target.value);
+                               if (type) setCalificarMaxScore(type.maxScore);
+                             }}
+                             className="w-full p-4 rounded-2xl bg-slate-50 border-none font-bold text-slate-800 text-sm shadow-inner outline-none focus:ring-2 focus:ring-blue-500"
+                           >
+                             <option value="">Seleccione...</option>
+                             {examTypes.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
+                           </select>
+                         </div>
+
+                         <div className="grid grid-cols-3 gap-4">
+                           <div className="space-y-2">
+                             <label className="text-[9px] font-black text-emerald-500 uppercase tracking-widest ml-2">Buenas</label>
+                             <input 
+                               type="number" 
+                               value={buenas}
+                               onChange={(e) => setBuenas(parseInt(e.target.value) || 0)}
+                               className="w-full p-4 rounded-2xl bg-emerald-50 border-none font-black text-emerald-700 text-center text-xl shadow-inner outline-none focus:ring-2 focus:ring-emerald-500"
+                             />
+                           </div>
+                           <div className="space-y-2">
+                             <label className="text-[9px] font-black text-rose-500 uppercase tracking-widest ml-2">Malas</label>
+                             <input 
+                               type="number" 
+                               value={malas}
+                               onChange={(e) => setMalas(parseInt(e.target.value) || 0)}
+                               className="w-full p-4 rounded-2xl bg-rose-50 border-none font-black text-rose-700 text-center text-xl shadow-inner outline-none focus:ring-2 focus:ring-rose-500"
+                             />
+                           </div>
+                           <div className="space-y-2">
+                             <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">Blancas</label>
+                             <input 
+                               type="number" 
+                               value={blancas}
+                               onChange={(e) => setBlancas(parseInt(e.target.value) || 0)}
+                               className="w-full p-4 rounded-2xl bg-slate-100 border-none font-black text-slate-600 text-center text-xl shadow-inner outline-none focus:ring-2 focus:ring-slate-400"
+                             />
+                           </div>
+                         </div>
+
+                         <div className="space-y-2">
+                           {/* Removed Nota Máxima Posible input */}
+                         </div>
+                       </div>
+
+                       <div className="flex flex-col justify-center items-center bg-slate-900 rounded-[2.5rem] p-10 text-white shadow-2xl relative overflow-hidden group">
+                         <div className="absolute top-0 right-0 p-8 opacity-10 group-hover:scale-110 transition-transform">
+                           <Award size={120} />
+                         </div>
+                         <p className="text-[10px] font-black uppercase tracking-[0.4em] opacity-50 mb-4">Calificación Final</p>
+                         <h3 className="text-8xl font-black tracking-tighter mb-2">
+                           {calculatedScore.finalGrade.toFixed(1)}
+                         </h3>
+                         <p className="text-blue-400 font-black uppercase tracking-widest text-[10px] mb-6">Nota Calculada</p>
+                         
+                         <div className="flex flex-col items-center gap-1 bg-white/5 px-6 py-3 rounded-2xl border border-white/10 backdrop-blur-sm">
+                           <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Puntaje Bruto</span>
+                           <span className="text-xl font-black text-white">{calculatedScore.rawScore.toFixed(1)}</span>
+                           <span className="text-[8px] font-bold text-slate-500 uppercase tracking-widest">Puntos Obtenidos</span>
+                         </div>
+                         
+                         <button 
+                           onClick={() => {
+                             if (!selectedExamType || !selectedCalificarPeriodo) {
+                               setToast({ message: "Complete todos los campos (Periodo y Tipo)", type: 'error' });
+                               return;
+                             }
+                             const newGrade: Grade = {
+                               id: Date.now().toString(),
+                               studentId: selectedCalificarStudent.id,
+                               studentName: `${selectedCalificarStudent.nombre} ${selectedCalificarStudent.apellido}`,
+                               materia: "",
+                               examType: selectedExamType,
+                               periodo: selectedCalificarPeriodo,
+                               nota: calculatedScore.finalGrade,
+                               fecha: new Date().toLocaleDateString(),
+                               buenas,
+                               malas,
+                               blancas,
+                               maxScore: 20,
+                               pointsPerGood: examTypes.find(t => t.name === selectedExamType)?.pointsPerGood,
+                               pointsPerBad: examTypes.find(t => t.name === selectedExamType)?.pointsPerBad,
+                               pointsPerBlank: examTypes.find(t => t.name === selectedExamType)?.pointsPerBlank,
+                               numQuestions: examTypes.find(t => t.name === selectedExamType)?.numQuestions,
+                               isIndispensable: examTypes.find(t => t.name === selectedExamType)?.isIndispensable,
+                               divisor: examTypes.find(t => t.name === selectedExamType)?.divisor || 1
+                             };
+                             setGrades(prev => [...prev, newGrade]);
+                             setToast({ message: "Calificación registrada con éxito", type: 'success' });
+                             // Reset form
+                             setBuenas(0);
+                             setMalas(0);
+                             setBlancas(0);
+                             setSelectedExamType("");
+                             
+                             setSelectedCalificarPeriodo("");
+                           }}
+                           className="mt-10 w-full bg-blue-600 hover:bg-blue-700 text-white py-4 rounded-2xl font-black uppercase tracking-widest text-sm transition-all shadow-xl flex items-center justify-center gap-3"
+                         >
+                           <Save size={20} /> Guardar Calificación
+                         </button>
+                       </div>
+                     </div>
+                   </div>
+                 )}
+               </div>
              </div>
            )}
 
@@ -3877,6 +4226,24 @@ const App = () => {
 
                           <button 
                             onClick={() => {
+                              const current = globalConfig.publicModules || { attendance: true, alerts: true, schedule: true, grades: true, hideTeacherSchedule: false };
+                              const newModules = { ...current, hideTeacherSchedule: !current.hideTeacherSchedule };
+                              setGlobalConfig({ ...globalConfig, publicModules: newModules });
+                              setToast({ message: `Horario de Docentes ${newModules.hideTeacherSchedule ? 'oculto' : 'visible'} para el público`, type: 'success' });
+                            }}
+                            className={`p-8 rounded-[2.5rem] border-2 flex flex-col items-center gap-4 group ${(globalConfig.publicModules?.hideTeacherSchedule) ? 'bg-slate-50 border-slate-100 opacity-60' : 'bg-amber-50 border-amber-200'}`}
+                          >
+                            <div className={`p-4 rounded-2xl ${(globalConfig.publicModules?.hideTeacherSchedule) ? 'bg-slate-200 text-slate-400' : 'bg-amber-600 text-white shadow-lg'}`}>
+                              <Shield size={24} />
+                            </div>
+                            <div className="text-center">
+                              <p className={`font-black uppercase tracking-widest text-[10px] ${(globalConfig.publicModules?.hideTeacherSchedule) ? 'text-slate-400' : 'text-amber-900'}`}>Mostrar Horario Docente</p>
+                              <p className="text-[9px] font-bold text-slate-400 uppercase mt-1">{(globalConfig.publicModules?.hideTeacherSchedule) ? 'Desactivado' : 'Activado'}</p>
+                            </div>
+                          </button>
+
+                          <button 
+                            onClick={() => {
                               const current = globalConfig.publicModules || { attendance: true, alerts: true, schedule: true, grades: true };
                               const newModules = { ...current, grades: !current.grades };
                               setGlobalConfig({ ...globalConfig, publicModules: newModules });
@@ -4022,6 +4389,10 @@ const App = () => {
                         onClick={() => setActiveGradosSubTab('secciones')}
                         className={`flex-1 md:flex-none px-4 md:px-6 py-2.5 md:py-3 rounded-lg font-black text-[9px] md:text-[10px] uppercase tracking-widest transition-all ${activeGradosSubTab === 'secciones' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400'}`}
                       >Secciones</button>
+                      <button 
+                        onClick={() => setActiveGradosSubTab('periodos')}
+                        className={`flex-1 md:flex-none px-4 md:px-6 py-2.5 md:py-3 rounded-lg font-black text-[9px] md:text-[10px] uppercase tracking-widest transition-all ${activeGradosSubTab === 'periodos' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400'}`}
+                      >Periodos</button>
                     </div>
                   </div>
 
@@ -4138,6 +4509,67 @@ const App = () => {
                                       }
                                       setSections(sections.filter(sec => sec !== s));
                                       setToast({ message: "Sección eliminada", type: 'success' });
+                                      setConfirmModal(null);
+                                    }
+                                  });
+                                }}
+                                className="p-2 text-rose-500 hover:bg-rose-50 rounded-lg"
+                              ><Trash2 size={14} /></button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {activeGradosSubTab === 'periodos' && (
+                    <div className="space-y-6 animate-slide-up">
+                      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
+                        <div>
+                          <h3 className="text-lg font-black text-slate-900 uppercase tracking-tight">Gestión de Periodos / Bimestres</h3>
+                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">Administra los periodos académicos disponibles</p>
+                        </div>
+                        <button 
+                          onClick={() => {
+                            setEditingPeriod(null);
+                            setPanelModalType('period');
+                          }}
+                          className="w-full md:w-auto flex items-center justify-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-xl font-black text-[10px] uppercase tracking-widest hover:scale-105 transition-all shadow-lg"
+                          style={{ backgroundColor: activeConfig.theme.primaryColor }}
+                        ><Plus size={16} /> Nuevo Periodo</button>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                        {(globalConfig.periods || []).map((p) => (
+                          <div key={p.id} className="bg-slate-50 p-6 rounded-2xl border border-slate-100 flex items-center justify-between group hover:border-blue-200 transition-all">
+                            <div className="flex items-center gap-4">
+                              <div className="w-12 h-12 rounded-xl bg-white shadow-sm flex items-center justify-center font-black text-blue-600 text-lg" style={{ color: activeConfig.theme.primaryColor }}>
+                                <Calendar size={20} />
+                              </div>
+                              <div>
+                                <p className="text-sm font-black text-slate-900 uppercase">{p.name}</p>
+                                <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Periodo Académico</p>
+                              </div>
+                            </div>
+                            <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <button 
+                                onClick={() => {
+                                  setEditingPeriod(p);
+                                  setPanelModalType('period');
+                                }}
+                                className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg"
+                              ><Edit size={14} /></button>
+                              <button 
+                                onClick={() => {
+                                  setConfirmModal({
+                                    title: "Eliminar Periodo",
+                                    message: `¿Estás seguro de eliminar el periodo "${p.name}"?`,
+                                    onConfirm: () => {
+                                      setGlobalConfig({
+                                        ...globalConfig,
+                                        periods: (globalConfig.periods || []).filter(per => per.id !== p.id)
+                                      });
+                                      setToast({ message: "Periodo eliminado", type: 'success' });
                                       setConfirmModal(null);
                                     }
                                   });
@@ -4744,27 +5176,27 @@ const App = () => {
                           </div>
 
                           <div className="bg-white p-6 md:p-10 rounded-[2.5rem] shadow-2xl border border-slate-100">
-                            <h3 className="text-xl font-black uppercase tracking-widest text-slate-800 mb-6">Tipos de Nota</h3>
+                            <div className="flex justify-between items-center mb-6">
+                              <h3 className="text-xl font-black uppercase tracking-widest text-slate-800">Tipos de Nota / Examen</h3>
+                              <button 
+                                onClick={() => setIsExamTypeModalOpen(true)}
+                                className="p-3 bg-slate-900 text-white rounded-xl shadow-lg hover:bg-slate-800 transition-all"
+                              ><Settings size={20} /></button>
+                            </div>
                             <div className="space-y-3">
-                              {gradeTypes.map(type => (
+                              {examTypes.map(type => (
                                 <div key={type.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                                  <span className="font-black text-slate-700 uppercase text-xs tracking-widest">{type.name}</span>
-                                  <button onClick={() => setGradeTypes(gradeTypes.filter(t => t.id !== type.id))} className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-all"><Trash2 size={16} /></button>
+                                  <div className="flex flex-col">
+                                    <span className="font-black text-slate-700 uppercase text-xs tracking-widest">{type.name}</span>
+                                    <span className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">Divisor: {type.divisor} | Q: {type.numQuestions}</span>
+                                  </div>
+                                  <div className="flex gap-2">
+                                    <button onClick={() => setIsExamTypeModalOpen(true)} className="p-2 text-blue-600 hover:bg-white rounded-lg transition-all shadow-sm"><Edit size={14} /></button>
+                                    <button onClick={() => setExamTypes(examTypes.filter(t => t.id !== type.id))} className="p-2 text-red-600 hover:bg-white rounded-lg transition-all shadow-sm"><Trash2 size={14} /></button>
+                                  </div>
                                 </div>
                               ))}
-                              <div className="pt-4 flex gap-2">
-                                <input id="new-grade-type" placeholder="Nuevo tipo..." className="flex-1 p-3 rounded-xl bg-slate-50 border border-slate-100 font-bold text-sm outline-none" />
-                                <button 
-                                  onClick={() => {
-                                    const input = document.getElementById('new-grade-type') as HTMLInputElement;
-                                    if(input.value) {
-                                      setGradeTypes([...gradeTypes, {id: Date.now().toString(), name: input.value}]);
-                                      input.value = '';
-                                    }
-                                  }}
-                                  className="p-3 bg-slate-900 text-white rounded-xl shadow-lg"
-                                ><Plus size={20} /></button>
-                              </div>
+                              {examTypes.length === 0 && <p className="text-center text-slate-400 font-bold py-10 uppercase text-[10px] tracking-widest italic">No hay tipos de nota registrados</p>}
                             </div>
                           </div>
                         </div>
@@ -4804,101 +5236,128 @@ const App = () => {
                       )}
 
                       {activeHorariosSubTab === 'creador' && (
-                        <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
-                          {/* Sidebar: Courses */}
-                          <div className="lg:col-span-1 space-y-6">
-                            <div className="bg-white p-6 rounded-[2.5rem] shadow-2xl border border-slate-100">
-                              <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4 ml-2">Materias Disponibles</h4>
-                              <div className="space-y-2">
-                                {courses.map(course => (
-                                  <div 
-                                    key={course.id}
-                                    draggable
-                                    onDragStart={() => setDraggedCourse(course)}
-                                    className="p-3 rounded-xl border-2 border-slate-50 bg-slate-50 cursor-move hover:border-blue-200 transition-all flex items-center gap-3 group"
-                                  >
-                                    <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: course.color }}></div>
-                                    <span className="font-black text-[10px] uppercase tracking-tight text-slate-600 group-hover:text-blue-600">{course.name}</span>
-                                  </div>
-                                ))}
-                                {courses.length === 0 && <p className="text-[9px] text-slate-400 font-bold uppercase text-center py-4 italic">Crea materias primero</p>}
+                        <div className="space-y-8">
+                          {/* Header: Controls & Filters */}
+                          <div className="bg-white p-6 md:p-10 rounded-[3rem] shadow-2xl border border-slate-100">
+                            <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
+                              {/* Materias */}
+                              <div className="lg:col-span-1">
+                                <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4 ml-2">Materias Disponibles</h4>
+                                <div className="flex flex-wrap gap-2 max-h-[120px] overflow-y-auto pr-2 custom-scrollbar">
+                                  {courses.map(course => (
+                                    <div 
+                                      key={course.id}
+                                      draggable
+                                      onDragStart={() => setDraggedCourse(course)}
+                                      className="p-2 px-3 rounded-xl border-2 border-slate-50 bg-slate-50 cursor-move hover:border-blue-200 transition-all flex items-center gap-2 group"
+                                    >
+                                      <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: course.color }}></div>
+                                      <span className="font-black text-[9px] uppercase tracking-tight text-slate-600 group-hover:text-blue-600">{course.name}</span>
+                                    </div>
+                                  ))}
+                                  {courses.length === 0 && <p className="text-[9px] text-slate-400 font-bold uppercase text-center py-4 italic w-full">Crea materias primero</p>}
+                                </div>
                               </div>
-                            </div>
 
-                            <div className="bg-white p-6 rounded-[2.5rem] shadow-2xl border border-slate-100">
-                              <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4 ml-2">Días de Clase</h4>
-                              <div className="grid grid-cols-2 gap-2">
-                                {['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'].map(dia => (
-                                  <button
-                                    key={dia}
-                                    onClick={() => {
-                                      if(schoolDays.includes(dia)) {
-                                        if (schoolDays.length > 1) {
-                                          setSchoolDays(schoolDays.filter(d => d !== dia));
+                              {/* Días de Clase */}
+                              <div className="lg:col-span-1">
+                                <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4 ml-2">Días de Clase</h4>
+                                <div className="grid grid-cols-4 gap-2">
+                                  {['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'].map(dia => (
+                                    <button
+                                      key={dia}
+                                      onClick={() => {
+                                        if(schoolDays.includes(dia)) {
+                                          if (schoolDays.length > 1) {
+                                            setSchoolDays(schoolDays.filter(d => d !== dia));
+                                          } else {
+                                            setToast({ message: "Debe haber al menos un día de clase", type: 'error' });
+                                          }
                                         } else {
-                                          setToast({ message: "Debe haber al menos un día de clase", type: 'error' });
+                                          const allDays = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
+                                          const newDays = [...schoolDays, dia].sort((a, b) => allDays.indexOf(a) - allDays.indexOf(b));
+                                          setSchoolDays(newDays);
                                         }
-                                      } else {
-                                        const allDays = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
-                                        const newDays = [...schoolDays, dia].sort((a, b) => allDays.indexOf(a) - allDays.indexOf(b));
-                                        setSchoolDays(newDays);
-                                      }
-                                    }}
-                                    className={`px-3 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all flex items-center justify-between ${schoolDays.includes(dia) ? 'bg-blue-600 text-white shadow-lg' : 'bg-slate-50 text-slate-400 border border-slate-100 hover:border-blue-200'}`}
-                                    style={schoolDays.includes(dia) ? { backgroundColor: activeConfig.theme.primaryColor } : {}}
-                                  >
-                                    {dia}
-                                    {schoolDays.includes(dia) ? <X size={10} /> : <Plus size={10} />}
-                                  </button>
-                                ))}
+                                      }}
+                                      className={`px-2 py-2 rounded-xl text-[8px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-1 ${schoolDays.includes(dia) ? 'bg-blue-600 text-white shadow-lg' : 'bg-slate-50 text-slate-400 border border-slate-100 hover:border-blue-200'}`}
+                                      style={schoolDays.includes(dia) ? { backgroundColor: activeConfig.theme.primaryColor } : {}}
+                                    >
+                                      {dia.substring(0, 3)}
+                                      {schoolDays.includes(dia) ? <X size={8} /> : <Plus size={8} />}
+                                    </button>
+                                  ))}
+                                </div>
                               </div>
-                            </div>
 
-                            <div className="bg-white p-6 rounded-[2.5rem] shadow-2xl border border-slate-100">
-                              <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4 ml-2">Filtros de Horario</h4>
-                              <div className="space-y-4">
-                                <select 
-                                  className="w-full p-3 rounded-xl bg-slate-50 border-none font-bold text-xs uppercase outline-none" 
-                                  id="schedule-grade-filter"
-                                  onChange={() => setScheduleGradeFilter((document.getElementById('schedule-grade-filter') as HTMLSelectElement).value)}
-                                >
-                                  <option value="">Seleccionar Grado</option>
-                                  {gradeLevels.map(gl => <option key={gl.id} value={gl.id}>{gl.nombre} "{gl.seccion}"</option>)}
-                                </select>
+                              {/* Filtros */}
+                              <div className="lg:col-span-2">
+                                <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4 ml-2">Filtros de Horario</h4>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                  <div className="space-y-1">
+                                    <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest ml-2">Grado</label>
+                                    <select 
+                                      className="w-full p-3 rounded-xl bg-slate-50 border-none font-bold text-xs uppercase outline-none" 
+                                      value={selectedGradeName}
+                                      onChange={(e) => {
+                                        setSelectedGradeName(e.target.value);
+                                        setScheduleGradeFilter('');
+                                      }}
+                                    >
+                                      <option value="">Seleccionar Grado</option>
+                                      {Array.from(new Set(gradeLevels.map(gl => gl.nombre))).map(name => (
+                                        <option key={name} value={name}>{name}</option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                  <div className="space-y-1">
+                                    <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest ml-2">Sección</label>
+                                    <select 
+                                      className="w-full p-3 rounded-xl bg-slate-50 border-none font-bold text-xs uppercase outline-none" 
+                                      value={scheduleGradeFilter}
+                                      onChange={(e) => setScheduleGradeFilter(e.target.value)}
+                                      disabled={!selectedGradeName}
+                                    >
+                                      <option value="">Seleccionar Sección</option>
+                                      {gradeLevels.filter(gl => gl.nombre === selectedGradeName).map(gl => (
+                                        <option key={gl.id} value={gl.id}>{gl.seccion}</option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                </div>
                               </div>
                             </div>
                           </div>
 
                           {/* Main: Schedule Grid */}
-                          <div className="lg:col-span-3 space-y-4">
-                              <div className="flex flex-col sm:flex-row justify-between items-center bg-white p-6 rounded-[2rem] shadow-xl border border-slate-100 gap-4">
-                                <div>
-                                  <h4 className="text-xl font-black text-slate-800 uppercase tracking-tight">Diseño de Horario</h4>
-                                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Arrastra materias al calendario para asignar</p>
-                                </div>
-                                <div className="flex gap-2 w-full sm:w-auto">
-                                  <button 
-                                    onClick={() => setIsAdminScheduleFullScreen(!isAdminScheduleFullScreen)}
-                                    className="flex-1 sm:flex-none bg-blue-600 text-white px-6 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-blue-700 transition-all shadow-lg"
-                                  >
-                                    <Calendar size={16} /> {isAdminScheduleFullScreen ? 'Salir Pantalla Completa' : 'Pantalla Completa'}
-                                  </button>
-                                  <button 
-                                    onClick={handlePrintAdminSchedule}
-                                    className="flex-1 sm:flex-none bg-slate-100 text-slate-600 px-6 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-slate-200 transition-all shadow-sm"
-                                  >
-                                    <Printer size={16} /> Imprimir
-                                  </button>
-                                  <button 
-                                    onClick={handleDownloadAdminSchedule}
-                                    className="flex-1 sm:flex-none bg-slate-900 text-white px-6 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-slate-800 transition-all shadow-lg"
-                                  >
-                                    <Download size={16} /> Descargar JPG
-                                  </button>
-                                </div>
+                          <div className="space-y-4">
+                            <div className="flex flex-col sm:flex-row justify-between items-center bg-white p-6 rounded-[2rem] shadow-xl border border-slate-100 gap-4">
+                              <div className="text-center sm:text-left">
+                                <h4 className="text-xl font-black text-slate-800 uppercase tracking-tight">Diseño de Horario</h4>
+                                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Arrastra materias al calendario para asignar</p>
                               </div>
+                              <div className="flex flex-wrap gap-2 w-full sm:w-auto justify-center sm:justify-end">
+                                <button 
+                                  onClick={() => setIsAdminScheduleFullScreen(!isAdminScheduleFullScreen)}
+                                  className="flex-1 sm:flex-none bg-blue-600 text-white px-4 py-3 rounded-2xl font-black text-[9px] uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-blue-700 transition-all shadow-lg min-w-[120px]"
+                                >
+                                  <Calendar size={14} /> {isAdminScheduleFullScreen ? 'Salir' : 'Pantalla Completa'}
+                                </button>
+                                <button 
+                                  onClick={handlePrintAdminSchedule}
+                                  className="flex-1 sm:flex-none bg-slate-100 text-slate-600 px-4 py-3 rounded-2xl font-black text-[9px] uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-slate-200 transition-all shadow-sm min-w-[100px]"
+                                >
+                                  <Printer size={14} /> Imprimir
+                                </button>
+                                <button 
+                                  onClick={handleDownloadAdminSchedule}
+                                  className="flex-1 sm:flex-none bg-slate-900 text-white px-4 py-3 rounded-2xl font-black text-[9px] uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-slate-800 transition-all shadow-lg min-w-[120px]"
+                                >
+                                  <Download size={14} /> Descargar
+                                </button>
+                              </div>
+                            </div>
 
-                              <div className={`bg-white p-4 md:p-10 rounded-[2.5rem] shadow-2xl border border-slate-100 overflow-x-auto custom-scrollbar relative ${isAdminScheduleFullScreen ? 'fixed inset-0 z-[200] rounded-none overflow-hidden flex flex-col' : ''}`}>
+                            <div className={`bg-white p-4 md:p-10 rounded-[2.5rem] shadow-2xl border border-slate-100 overflow-x-auto custom-scrollbar relative ${isAdminScheduleFullScreen ? 'fixed inset-0 z-[200] rounded-none overflow-hidden flex flex-col' : ''}`}>
                                 {isAdminScheduleFullScreen && (
                                   <button 
                                     onClick={() => setIsAdminScheduleFullScreen(false)}
@@ -4928,7 +5387,19 @@ const App = () => {
                                     </div>
                                     {schoolDays.map(dia => {
                                       const targetId = scheduleGradeFilter;
-                                      const sch = schedules.find(s => (s.dia === dia || s.day === dia) && (s.inicio === slot.start || s.timeSlotId === slot.id) && s.targetId === targetId);
+                                      const teacherId = scheduleTeacherFilter;
+                                      
+                                      let sch = null;
+                                      if (targetId) {
+                                        sch = schedules.find(s => (s.dia === dia || s.day === dia) && (s.inicio === slot.start || s.timeSlotId === slot.id) && s.targetId === targetId);
+                                      } else if (teacherId) {
+                                        sch = schedules.find(s => {
+                                          if ((s.dia !== dia && s.day !== dia) || (s.inicio !== slot.start && s.timeSlotId !== slot.id)) return false;
+                                          const course = courses.find(c => c.name === s.materia);
+                                          return course?.teacherId === teacherId;
+                                        });
+                                      }
+
                                       return (
                                         <div 
                                           key={dia}
@@ -4946,12 +5417,12 @@ const App = () => {
                                               }
 
                                               // Check for teacher conflicts (same teacher at same time in ANY grade)
-                                              const teacherId = courseToUse.teacherId;
-                                              if (teacherId) {
+                                              const tId = courseToUse.teacherId;
+                                              if (tId) {
                                                 const teacherConflict = schedules.find(s => {
                                                   if ((s.dia !== dia && s.day !== dia) || (s.inicio !== slot.start && s.timeSlotId !== slot.id) || s.id === draggedSchedule?.id) return false;
                                                   const sCourse = courses.find(c => c.name === s.materia);
-                                                  return sCourse?.teacherId === teacherId;
+                                                  return sCourse?.teacherId === tId;
                                                 });
                                                 if (teacherConflict) {
                                                   setToast({ message: "El profesor ya tiene una clase en este horario", type: 'error' });
@@ -4976,16 +5447,18 @@ const App = () => {
                                               setDraggedCourse(null);
                                               setDraggedSchedule(null);
                                               setToast({ message: "Horario actualizado", type: 'success' });
-                                            } else if (!targetId) {
+                                            } else if (!targetId && !teacherId) {
                                               setToast({ message: "Selecciona un grado primero", type: 'error' });
+                                            } else if (teacherId) {
+                                              setToast({ message: "Solo puedes asignar clases desde la vista de Grado", type: 'info' });
                                             }
                                           }}
                                           className={`min-h-[100px] rounded-[1.5rem] border-2 border-dashed transition-all flex items-center justify-center p-3 relative group ${sch ? 'border-transparent shadow-md' : 'border-slate-100 hover:border-blue-400 hover:bg-blue-50/50'}`}
                                         >
                                           {sch ? (
                                             <div 
-                                              draggable
-                                              onDragStart={() => setDraggedSchedule(sch)}
+                                              draggable={!!targetId}
+                                              onDragStart={() => targetId && setDraggedSchedule(sch)}
                                               className="w-full h-full rounded-2xl flex flex-col items-center justify-center text-center p-3 shadow-sm border-2 cursor-move relative transition-transform hover:scale-[1.02]"
                                               style={{ 
                                                 backgroundColor: (courses.find(c => c.name === sch.materia)?.color || '#3b82f6') + '15',
@@ -4997,13 +5470,19 @@ const App = () => {
                                               <div className="flex items-center gap-1 opacity-60">
                                                 <GraduationCap size={10} />
                                                 <span className="text-[8px] font-bold uppercase">
-                                                  {students.find(s => s.id === courses.find(c => c.name === sch.materia)?.teacherId)?.nombre || 'S.D.'}
+                                                  {teacherId ? (
+                                                    gradeLevels.find(gl => gl.id === sch.targetId) ? `${gradeLevels.find(gl => gl.id === sch.targetId)?.nombre} "${gradeLevels.find(gl => gl.id === sch.targetId)?.seccion}"` : 'S.G.'
+                                                  ) : (
+                                                    students.find(s => s.id === courses.find(c => c.name === sch.materia)?.teacherId)?.nombre || 'S.D.'
+                                                  )}
                                                 </span>
                                               </div>
-                                              <button 
-                                                onClick={() => setSchedules(schedules.filter(s => s.id !== sch.id))}
-                                                className="absolute -top-3 -right-3 opacity-0 group-hover:opacity-100 p-2 bg-white rounded-full shadow-xl text-red-500 hover:scale-110 transition-all border border-slate-100 z-10"
-                                              ><X size={14} /></button>
+                                              {targetId && (
+                                                <button 
+                                                  onClick={() => setSchedules(schedules.filter(s => s.id !== sch.id))}
+                                                  className="absolute -top-3 -right-3 opacity-0 group-hover:opacity-100 p-2 bg-white rounded-full shadow-xl text-red-500 hover:scale-110 transition-all border border-slate-100 z-10"
+                                                ><X size={14} /></button>
+                                              )}
                                             </div>
                                           ) : (
                                             <div className="flex flex-col items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
@@ -5107,7 +5586,7 @@ const App = () => {
                   <p className="text-slate-500 text-lg">Administración global del sistema {activeConfig.siteName}.</p>
                 </div>
                 <div className="flex flex-col sm:flex-row bg-white p-2 rounded-2xl shadow-xl border border-slate-100 w-full sm:w-auto">
-                  {currentUser?.role === 'admin' && !currentUser.parentId && (
+                  {(currentUser?.role === 'admin' || currentUser?.role === 'enrolador') && !currentUser.parentId && (
                     <button 
                       onClick={() => setActiveConfigSubTab('usuarios')}
                       className={`px-4 sm:px-8 py-3 sm:py-4 rounded-xl font-black text-[10px] sm:text-xs uppercase tracking-widest transition-all ${activeConfigSubTab === 'usuarios' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:text-slate-600'}`}
@@ -5120,12 +5599,6 @@ const App = () => {
                     className={`px-4 sm:px-8 py-3 sm:py-4 rounded-xl font-black text-[10px] sm:text-xs uppercase tracking-widest transition-all ${activeConfigSubTab === 'sistema' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:text-slate-600'}`}
                   >
                     Sistema
-                  </button>
-                  <button 
-                    onClick={() => setActiveConfigSubTab('credenciales')}
-                    className={`px-4 sm:px-8 py-3 sm:py-4 rounded-xl font-black text-[10px] sm:text-xs uppercase tracking-widest transition-all ${activeConfigSubTab === 'credenciales' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:text-slate-600'}`}
-                  >
-                    Credenciales
                   </button>
                 </div>
               </header>
@@ -5400,209 +5873,6 @@ const App = () => {
                 </div>
               )}
 
-              {activeConfigSubTab === 'credenciales' && (
-                <div className="space-y-8 animate-fade-in">
-                  <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
-                    <h3 className="text-xl sm:text-2xl font-black text-slate-800 uppercase tracking-tighter flex items-center gap-3">
-                      <IdCard className="text-blue-600" /> Personalización de Credenciales
-                    </h3>
-                  </div>
-
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                    {/* Student Credential Config */}
-                    <div className="bg-white rounded-[2.5rem] p-8 shadow-2xl border border-slate-100 space-y-6">
-                      <div className="flex items-center gap-4 border-b border-slate-50 pb-4">
-                        <div className="p-3 bg-blue-50 text-blue-600 rounded-2xl"><GraduationCap size={24} /></div>
-                        <h4 className="font-black text-slate-800 uppercase tracking-tight">Credencial de Alumnos</h4>
-                      </div>
-                      
-                      <div className="space-y-4">
-                        <div className="space-y-2">
-                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Color de Identificación</label>
-                          <div className="flex items-center gap-4">
-                            <input 
-                              type="color" 
-                              value={globalConfig.credentialConfig?.studentColor || '#3b82f6'} 
-                              onChange={(e) => setGlobalConfig({
-                                ...globalConfig, 
-                                credentialConfig: {
-                                  ...(globalConfig.credentialConfig || DEFAULT_CONFIG.credentialConfig),
-                                  studentColor: e.target.value
-                                }
-                              })}
-                              className="w-16 h-16 rounded-2xl cursor-pointer border-4 border-white shadow-lg"
-                            />
-                            <div className="flex-1 p-4 bg-slate-50 rounded-2xl border border-slate-100 font-bold text-slate-600 uppercase text-xs">
-                              {globalConfig.credentialConfig?.studentColor || '#3b82f6'}
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="space-y-2">
-                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Imagen de Fondo (Diseño)</label>
-                          <div className="relative group">
-                            <div className="w-full aspect-[86/54] bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200 flex flex-col items-center justify-center overflow-hidden relative">
-                              {globalConfig.credentialConfig?.studentBg ? (
-                                <>
-                                  <img src={globalConfig.credentialConfig.studentBg} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                                  <div className="absolute inset-0 bg-slate-900/40 opacity-0 group-hover:opacity-100 transition-all flex items-center justify-center gap-2">
-                                    <button 
-                                      onClick={() => setGlobalConfig({
-                                        ...globalConfig,
-                                        credentialConfig: {
-                                          ...(globalConfig.credentialConfig || DEFAULT_CONFIG.credentialConfig),
-                                          studentBg: undefined
-                                        }
-                                      })}
-                                      className="p-3 bg-rose-500 text-white rounded-xl hover:scale-110 transition-all"
-                                    >
-                                      <Trash2 size={18} />
-                                    </button>
-                                  </div>
-                                </>
-                              ) : (
-                                <>
-                                  <Upload className="text-slate-300 mb-2" size={32} />
-                                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Subir Fondo (86mm x 54mm)</p>
-                                  <input 
-                                    type="file" 
-                                    accept="image/*"
-                                    onChange={(e) => {
-                                      const file = e.target.files?.[0];
-                                      if (file) {
-                                        const reader = new FileReader();
-                                        reader.onloadend = () => {
-                                          const result = reader.result as string;
-                                          setGlobalConfig(prev => ({
-                                            ...prev,
-                                            credentialConfig: {
-                                              ...(prev.credentialConfig || DEFAULT_CONFIG.credentialConfig),
-                                              studentBg: result
-                                            }
-                                          }));
-                                        };
-                                        reader.readAsDataURL(file);
-                                      }
-                                    }}
-                                    className="absolute inset-0 opacity-0 cursor-pointer"
-                                  />
-                                </>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Teacher Credential Config */}
-                    <div className="bg-white rounded-[2.5rem] p-8 shadow-2xl border border-slate-100 space-y-6">
-                      <div className="flex items-center gap-4 border-b border-slate-50 pb-4">
-                        <div className="p-3 bg-emerald-50 text-emerald-600 rounded-2xl"><UserCheck size={24} /></div>
-                        <h4 className="font-black text-slate-800 uppercase tracking-tight">Credencial de Docentes</h4>
-                      </div>
-                      
-                      <div className="space-y-4">
-                        <div className="space-y-2">
-                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Color de Identificación</label>
-                          <div className="flex items-center gap-4">
-                            <input 
-                              type="color" 
-                              value={globalConfig.credentialConfig?.teacherColor || '#10b981'} 
-                              onChange={(e) => setGlobalConfig({
-                                ...globalConfig, 
-                                credentialConfig: {
-                                  ...(globalConfig.credentialConfig || DEFAULT_CONFIG.credentialConfig),
-                                  teacherColor: e.target.value
-                                }
-                              })}
-                              className="w-16 h-16 rounded-2xl cursor-pointer border-4 border-white shadow-lg"
-                            />
-                            <div className="flex-1 p-4 bg-slate-50 rounded-2xl border border-slate-100 font-bold text-slate-600 uppercase text-xs">
-                              {globalConfig.credentialConfig?.teacherColor || '#10b981'}
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="space-y-2">
-                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Imagen de Fondo (Diseño)</label>
-                          <div className="relative group">
-                            <div className="w-full aspect-[86/54] bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200 flex flex-col items-center justify-center overflow-hidden relative">
-                              {globalConfig.credentialConfig?.teacherBg ? (
-                                <>
-                                  <img src={globalConfig.credentialConfig.teacherBg} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                                  <div className="absolute inset-0 bg-slate-900/40 opacity-0 group-hover:opacity-100 transition-all flex items-center justify-center gap-2">
-                                    <button 
-                                      onClick={() => setGlobalConfig({
-                                        ...globalConfig,
-                                        credentialConfig: {
-                                          ...(globalConfig.credentialConfig || DEFAULT_CONFIG.credentialConfig),
-                                          teacherBg: undefined
-                                        }
-                                      })}
-                                      className="p-3 bg-rose-500 text-white rounded-xl hover:scale-110 transition-all"
-                                    >
-                                      <Trash2 size={18} />
-                                    </button>
-                                  </div>
-                                </>
-                              ) : (
-                                <>
-                                  <Upload className="text-slate-300 mb-2" size={32} />
-                                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Subir Fondo (86mm x 54mm)</p>
-                                  <input 
-                                    type="file" 
-                                    accept="image/*"
-                                    onChange={(e) => {
-                                      const file = e.target.files?.[0];
-                                      if (file) {
-                                        const reader = new FileReader();
-                                        reader.onloadend = () => {
-                                          const result = reader.result as string;
-                                          setGlobalConfig(prev => ({
-                                            ...prev,
-                                            credentialConfig: {
-                                              ...(prev.credentialConfig || DEFAULT_CONFIG.credentialConfig),
-                                              teacherBg: result
-                                            }
-                                          }));
-                                        };
-                                        reader.readAsDataURL(file);
-                                      }
-                                    }}
-                                    className="absolute inset-0 opacity-0 cursor-pointer"
-                                  />
-                                </>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Dimensions & Info */}
-                    <div className="lg:col-span-2 bg-blue-600 rounded-[2.5rem] p-8 text-white shadow-2xl flex flex-col md:flex-row items-center gap-8">
-                      <div className="p-6 bg-white/10 rounded-3xl border border-white/10">
-                        <Maximize size={48} className="text-white" />
-                      </div>
-                      <div className="flex-1 space-y-2 text-center md:text-left">
-                        <h4 className="text-2xl font-black uppercase tracking-tight">Medidas Estándar de Credencial</h4>
-                        <p className="text-blue-100 font-bold">El sistema utiliza el formato CR80 estándar: <span className="text-white underline decoration-white/30 underline-offset-4">86mm x 54mm</span>.</p>
-                        <p className="text-xs text-blue-200 uppercase tracking-widest font-black pt-2">Se recomienda subir imágenes con una resolución mínima de 1016px x 638px para una impresión profesional.</p>
-                      </div>
-                      <div className="grid grid-cols-2 gap-4 w-full md:w-auto">
-                        <div className="bg-white/10 p-4 rounded-2xl border border-white/10 text-center">
-                          <p className="text-[10px] font-black uppercase tracking-widest opacity-60">Ancho</p>
-                          <p className="text-xl font-black">86mm</p>
-                        </div>
-                        <div className="bg-white/10 p-4 rounded-2xl border border-white/10 text-center">
-                          <p className="text-[10px] font-black uppercase tracking-widest opacity-60">Alto</p>
-                          <p className="text-xl font-black">54mm</p>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
             </div>
           )}
         </div>
@@ -5630,9 +5900,16 @@ const App = () => {
                       placeholder="00000000" 
                       className="w-full p-3 md:p-8 rounded-[1rem] md:rounded-[2rem] bg-slate-50 border-2 md:border-4 border-slate-100 focus:border-blue-500 outline-none text-xl md:text-5xl tracking-[0.1em] md:tracking-[0.3em] text-center font-black text-slate-900 shadow-inner"
                       autoFocus
+                      onChange={(e) => {
+                        if (e.target.value.length === 8) {
+                          markAttendance(e.target.value, selectedQuickStatus);
+                          e.target.value = '';
+                        }
+                      }}
                       onKeyDown={(e) => {
                         if(e.key === 'Enter') {
                           markAttendance((e.target as HTMLInputElement).value, selectedQuickStatus);
+                          (e.target as HTMLInputElement).value = '';
                         }
                       }}
                     />
@@ -5914,6 +6191,43 @@ const App = () => {
               </div>
               <button type="submit" className="w-full py-4 md:py-5 bg-blue-600 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] md:text-xs shadow-xl hover:bg-blue-700 transition-all" style={{ backgroundColor: activeConfig.theme.primaryColor }}>
                 {editingSection ? 'Actualizar Sección' : 'Guardar Sección'}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {panelModalType === 'period' && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 md:p-6 bg-slate-950/70 backdrop-blur-xl animate-fade-in">
+          <div className="bg-white rounded-[2rem] md:rounded-[4rem] shadow-2xl w-full max-w-md overflow-hidden animate-slide-up border border-white/20">
+            <div className="p-6 md:p-10 border-b border-slate-100 flex justify-between items-center bg-blue-700 text-white" style={{ backgroundColor: activeConfig.theme.primaryColor }}>
+              <h2 className="text-xl md:text-2xl font-black uppercase tracking-widest">{editingPeriod ? 'Editar Periodo' : 'Nuevo Periodo'}</h2>
+              <button onClick={() => { setPanelModalType(null); setEditingPeriod(null); }} className="hover:bg-white/20 p-2 md:p-3 rounded-full transition-all"><X size={20} md:size={24} /></button>
+            </div>
+            <form onSubmit={(e: any) => {
+              e.preventDefault();
+              const nombre = e.target.nombre.value.toUpperCase();
+              if(nombre) {
+                const newPeriods = [...(globalConfig.periods || [])];
+                if (editingPeriod) {
+                  const idx = newPeriods.findIndex(p => p.id === editingPeriod.id);
+                  newPeriods[idx] = { ...editingPeriod, name: nombre };
+                  setToast({ message: "Periodo actualizado", type: 'success' });
+                } else {
+                  newPeriods.push({ id: Date.now().toString(), name: nombre });
+                  setToast({ message: "Periodo creado", type: 'success' });
+                }
+                setGlobalConfig({ ...globalConfig, periods: newPeriods });
+                setPanelModalType(null);
+                setEditingPeriod(null);
+              }
+            }} className="p-6 md:p-10 space-y-4 md:space-y-6">
+              <div className="space-y-2">
+                <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Nombre del Periodo</label>
+                <input name="nombre" required defaultValue={editingPeriod?.name || ''} placeholder="Ej. 1ER BIMESTRE" className="w-full p-4 md:p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-base md:text-lg outline-none transition-all" />
+              </div>
+              <button type="submit" className="w-full py-4 md:py-5 bg-blue-600 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] md:text-xs shadow-xl hover:bg-blue-700 transition-all" style={{ backgroundColor: activeConfig.theme.primaryColor }}>
+                {editingPeriod ? 'Actualizar Periodo' : 'Guardar Periodo'}
               </button>
             </form>
           </div>
@@ -6935,11 +7249,21 @@ const App = () => {
                   <select name="role" defaultValue={editingUser?.role || 'staff'} className="w-full p-3 md:p-4 rounded-xl md:rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-sm md:text-lg appearance-none outline-none">
                     <option value="admin">Administrador (Master)</option>
                     <option value="staff">Personal (Staff)</option>
+                    <option value="enrolador">Enrolador (Configurable)</option>
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Vincular Estudiante/Docente</label>
+                  <select name="studentId" defaultValue={editingUser?.studentId || ''} className="w-full p-3 md:p-4 rounded-xl md:rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-sm md:text-lg appearance-none outline-none">
+                    <option value="">Sin vincular</option>
+                    {students.map(s => (
+                      <option key={s.id} value={s.id}>{s.rol}: {s.nombre}</option>
+                    ))}
                   </select>
                 </div>
               </div>
 
-              {currentUser?.role === 'admin' && !currentUser.parentId && (
+              {(currentUser?.role === 'admin' || currentUser?.role === 'enrolador') && !currentUser.parentId && (
                 <>
                   <div className="space-y-4 pt-4 border-t border-slate-100">
                     <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Permisos de Acceso (Mínimo 1)</label>
@@ -7260,6 +7584,116 @@ const App = () => {
         </div>
       )}
 
+      {/* Exam Type Modal */}
+      {isExamTypeModalOpen && (
+        <div className="fixed inset-0 z-[150] flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xl animate-fade-in">
+          <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-2xl overflow-hidden animate-slide-up border border-white/20">
+            <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-900 text-white">
+              <h2 className="text-xl font-black uppercase tracking-widest">Configurar Tipos de Examen</h2>
+              <button onClick={() => setIsExamTypeModalOpen(false)} className="hover:bg-white/20 p-2 rounded-full transition-all"><X size={20} /></button>
+            </div>
+            <div className="p-8 space-y-6 max-h-[70vh] overflow-y-auto no-scrollbar">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {examTypes.map(type => (
+                  <div key={type.id} className="bg-slate-50 p-6 rounded-3xl border-2 border-slate-100 space-y-4 relative group">
+                    <button 
+                      onClick={() => setExamTypes(examTypes.filter(t => t.id !== type.id))}
+                      className="absolute top-4 right-4 text-slate-300 hover:text-rose-600 transition-colors opacity-0 group-hover:opacity-100"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                    <div className="space-y-2">
+                      <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Nombre del Examen</label>
+                      <input 
+                        type="text"
+                        value={type.name}
+                        onChange={(e) => setExamTypes(examTypes.map(t => t.id === type.id ? {...t, name: e.target.value} : t))}
+                        className="w-full p-3 rounded-xl bg-white border-none font-bold text-slate-800 text-sm shadow-sm outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Divisor de Nota</label>
+                        <input 
+                          type="number"
+                          step="0.1"
+                          value={type.divisor || 1}
+                          onChange={(e) => setExamTypes(examTypes.map(t => t.id === type.id ? {...t, divisor: parseFloat(e.target.value) || 1} : t))}
+                          className="w-full p-2 rounded-lg bg-white border-none font-bold text-slate-800 text-xs shadow-sm outline-none"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Num. Preguntas</label>
+                        <input 
+                          type="number"
+                          value={type.numQuestions || 0}
+                          onChange={(e) => setExamTypes(examTypes.map(t => t.id === type.id ? {...t, numQuestions: parseInt(e.target.value) || 0} : t))}
+                          className="w-full p-2 rounded-lg bg-white border-none font-bold text-slate-800 text-xs shadow-sm outline-none"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[8px] font-black text-emerald-500 uppercase tracking-widest">Ptos. Buenas</label>
+                        <input 
+                          type="number"
+                          step="0.1"
+                          value={type.pointsPerGood}
+                          onChange={(e) => setExamTypes(examTypes.map(t => t.id === type.id ? {...t, pointsPerGood: parseFloat(e.target.value) || 0} : t))}
+                          className="w-full p-2 rounded-lg bg-white border-none font-bold text-emerald-600 text-xs shadow-sm outline-none"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[8px] font-black text-rose-500 uppercase tracking-widest">Ptos. Malas</label>
+                        <input 
+                          type="number"
+                          step="0.1"
+                          value={type.pointsPerBad}
+                          onChange={(e) => setExamTypes(examTypes.map(t => t.id === type.id ? {...t, pointsPerBad: parseFloat(e.target.value) || 0} : t))}
+                          className="w-full p-2 rounded-lg bg-white border-none font-bold text-rose-600 text-xs shadow-sm outline-none"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Ptos. Blancas</label>
+                        <input 
+                          type="number"
+                          step="0.1"
+                          value={type.pointsPerBlank}
+                          onChange={(e) => setExamTypes(examTypes.map(t => t.id === type.id ? {...t, pointsPerBlank: parseFloat(e.target.value) || 0} : t))}
+                          className="w-full p-2 rounded-lg bg-white border-none font-bold text-slate-600 text-xs shadow-sm outline-none"
+                        />
+                      </div>
+                      <div className="flex items-center gap-2 pt-4">
+                        <input 
+                          type="checkbox"
+                          checked={type.isIndispensable || false}
+                          onChange={(e) => setExamTypes(examTypes.map(t => t.id === type.id ? {...t, isIndispensable: e.target.checked} : t))}
+                          className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                        />
+                        <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Indispensable</label>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+                <button 
+                  onClick={() => setExamTypes([...examTypes, { id: Date.now().toString(), name: 'Nuevo Examen', maxScore: 20, pointsPerGood: 1, pointsPerBad: 0, pointsPerBlank: 0, numQuestions: 20, isIndispensable: false, divisor: 1 }])}
+                  className="border-4 border-dashed border-slate-100 rounded-3xl p-6 flex flex-col items-center justify-center gap-3 text-slate-300 hover:text-blue-500 hover:border-blue-100 transition-all group"
+                >
+                  <Plus size={32} className="group-hover:scale-110 transition-transform" />
+                  <span className="font-black uppercase tracking-widest text-[10px]">Agregar Tipo</span>
+                </button>
+              </div>
+              <div className="pt-6">
+                <button 
+                  onClick={() => setIsExamTypeModalOpen(false)}
+                  className="w-full bg-slate-900 text-white py-4 rounded-2xl font-black uppercase tracking-widest text-xs shadow-xl hover:bg-slate-800 transition-all"
+                >
+                  Cerrar y Guardar
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Time Slot Modal */}
       {editingTimeSlot && (
         <div className="fixed inset-0 z-[130] flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xl animate-fade-in">
@@ -7485,6 +7919,9 @@ const App = () => {
           pub={globalConfig.publicModules}
           conductActions={conductActions}
           grades={grades}
+          schoolDays={schoolDays}
+          gradeLevels={gradeLevels}
+          students={students}
         />
       )}
     </>
