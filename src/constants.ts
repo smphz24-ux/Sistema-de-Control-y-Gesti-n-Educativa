@@ -18,7 +18,6 @@ export const PREDEFINED_COURSE_COLORS = [
 export const DEFAULT_CONFIG = {
   siteName: 'Sistema de Control y Gestión',
   slogan: 'Educación con Valores y Tecnología',
-  logo: 'https://picsum.photos/seed/educativa/200',
   theme: {
     primaryColor: '#1e3a8a',
     secondaryColor: '#3b82f6',
@@ -50,6 +49,13 @@ export const DEFAULT_CONFIG = {
     { id: '3', name: '3er Bimestre' },
     { id: '4', name: '4to Bimestre' }
   ],
+  examTypes: [
+    { id: '1', name: 'Tarea', maxScore: 20, pointsPerGood: 2, pointsPerBad: 0, pointsPerBlank: 0, numQuestions: 10, isIndispensable: false, divisor: 1 },
+    { id: '2', name: 'Examen Parcial', maxScore: 20, pointsPerGood: 1, pointsPerBad: -0.25, pointsPerBlank: 0, numQuestions: 20, isIndispensable: true, divisor: 1 },
+    { id: '3', name: 'Examen Final', maxScore: 20, pointsPerGood: 1, pointsPerBad: -0.25, pointsPerBlank: 0, numQuestions: 20, isIndispensable: true, divisor: 1 },
+    { id: '4', name: 'Participación', maxScore: 20, pointsPerGood: 1, pointsPerBad: 0, pointsPerBlank: 0, numQuestions: 20, isIndispensable: false, divisor: 1 }
+  ],
+  sections: ['A', 'B', 'C', 'D', 'E'],
   footerText: 'Control y Gestión 2026 © 2024',
   credentialConfig: {
     studentColor: '#3b82f6',

@@ -9,7 +9,8 @@ import {
   Database, 
   Settings, 
   LogOut,
-  GraduationCap
+  GraduationCap,
+  ArrowLeft
 } from 'lucide-react';
 import { User, AppConfig } from '../types';
 
@@ -22,6 +23,8 @@ interface SidebarProps {
   activeConfig: AppConfig;
   onLogout: () => void;
   navItems: { id: string, icon: any, label: string }[];
+  originalUser?: User | null;
+  onBackToOriginal?: () => void;
 }
 
 const Sidebar: React.FC<SidebarProps> = ({
@@ -32,7 +35,9 @@ const Sidebar: React.FC<SidebarProps> = ({
   currentUser,
   activeConfig,
   onLogout,
-  navItems
+  navItems,
+  originalUser,
+  onBackToOriginal
 }) => {
   return (
     <>
@@ -43,7 +48,10 @@ const Sidebar: React.FC<SidebarProps> = ({
           onClick={() => setIsMobileMenuOpen(false)}
         />
       )}
-      <aside className={`fixed inset-y-0 left-0 z-50 w-72 bg-slate-900 text-white transform transition-transform duration-300 ease-in-out lg:relative lg:translate-x-0 ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+      <aside 
+        className={`fixed inset-y-0 left-0 z-50 w-72 transform transition-transform duration-300 ease-in-out lg:relative lg:translate-x-0 ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}`}
+        style={{ backgroundColor: 'var(--sidebar-bg, #0f172a)', color: '#ffffff' }}
+      >
       <div className="h-full flex flex-col">
         <div className="p-8 border-b border-white/5">
           <div className="flex items-center gap-4 mb-6">
@@ -71,6 +79,14 @@ const Sidebar: React.FC<SidebarProps> = ({
         </nav>
 
         <div className="p-6 border-t border-white/5">
+          {originalUser && (
+            <button 
+              onClick={onBackToOriginal}
+              className="w-full flex items-center justify-center gap-3 px-6 py-4 rounded-2xl bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500 hover:text-white transition-all font-black text-[10px] uppercase tracking-widest mb-2"
+            >
+              <ArrowLeft size={16} /> Volver a mi cuenta
+            </button>
+          )}
           <div className="bg-white/5 rounded-3xl p-4 mb-4">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl flex items-center justify-center font-black text-sm" style={{ backgroundColor: 'var(--primary-color)' }}>

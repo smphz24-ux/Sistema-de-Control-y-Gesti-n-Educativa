@@ -28,6 +28,7 @@ import {
   ChevronRight,
   Edit,
   Upload,
+  Check,
   UserCheck,
   IdCard,
   AlertCircle,
@@ -48,6 +49,9 @@ import {
   Mail,
   Settings,
   Shield,
+  School,
+  Hash,
+  Eraser,
   ShieldCheck,
   FileSpreadsheet,
   Palette,
@@ -55,7 +59,10 @@ import {
   Globe,
   Lock,
   Menu,
-  ArrowLeft
+  ArrowLeft,
+  Share2,
+  LogIn,
+  Eye
 } from 'lucide-react';
 import QRCode from 'qrcode';
 import JSZip from 'jszip';
@@ -68,7 +75,7 @@ import {
   AppUser, UserConfig, Student, ConsultationLog, AttendanceStatus, 
   Attendance, Grade, ExamType, Level, GradeLevel, Shift, Schedule, 
   IncidenceSeverity, IncidenceStatus, Incidence, IncidenceType, AppNotification,
-  MeritCategory, DemeritCategory, ConductAction
+  MeritCategory, DemeritCategory, ConductAction, Period, Enrollment
 } from './types';
 import { PREDEFINED_THEMES, PREDEFINED_COURSE_COLORS, DEFAULT_CONFIG } from './constants';
 import * as api from './services/api';
@@ -81,7 +88,7 @@ import Login from './components/Login';
 import AdminLoginModal from './components/AdminLoginModal';
 
 // Declaration for jsQR which is loaded via CDN in index.html
-const ALL_PERMISSIONS = ['dashboard', 'estudiantes', 'asistencia', 'reportes', 'alerta', 'calificaciones', 'mi-panel', 'config', 'horarios', 'mi-panel:grados', 'mi-panel:alerta', 'mi-panel:horario'];
+const ALL_PERMISSIONS = ['dashboard', 'estudiantes', 'asistencia', 'reportes', 'alerta', 'calificaciones', 'mi-panel', 'config', 'horarios', 'matricula', 'mi-panel:grados', 'mi-panel:alerta', 'mi-panel:horario'];
 
 const App = () => {
   // --- State ---
@@ -92,13 +99,15 @@ const App = () => {
     const saved = localStorage.getItem('edu_config_v10');
     if (saved) {
       try {
-        return JSON.parse(saved);
+        const parsed = JSON.parse(saved);
+        return { ...DEFAULT_CONFIG, ...parsed, theme: { ...DEFAULT_CONFIG.theme, ...parsed.theme } };
       } catch (e) {
         console.error("Error parsing globalConfig", e);
       }
     }
     return DEFAULT_CONFIG;
   });
+  const [pendingConfig, setPendingConfig] = useState<UserConfig | null>(null);
 
   const [selectedGradeName, setSelectedGradeName] = useState<string>('');
 
@@ -120,17 +129,35 @@ const App = () => {
 
   const debouncedSaveConfig = useMemo(
     () => debounce((config: any) => {
-      api.saveConfig(config);
-      
-      // Broadcast to other clients
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${protocol}//${window.location.host}`;
-      const socket = new WebSocket(wsUrl);
-      socket.onopen = () => {
-        socket.send(JSON.stringify({ type: 'config_update', data: config }));
-        socket.close();
-      };
-    }, 1000),
+      api.saveConfig(config).catch(err => {
+        console.error("Failed to save config remotely:", err);
+        setToast({ message: "Error al guardar configuración. Verifique su conexión.", type: 'error' });
+      });
+    }, 2000),
+    []
+  );
+
+  const debouncedSaveUsers = useMemo(
+    () => debounce((usersList: AppUser[]) => {
+      if (usersList.length > 0) {
+        api.saveUsers(usersList).catch(err => {
+          console.error("Failed to save users remotely:", err);
+          setToast({ message: "Error al guardar usuarios. Verifique su conexión.", type: 'error' });
+        });
+      }
+    }, 2000),
+    []
+  );
+
+  const debouncedSaveUserData = useMemo(
+    () => debounce(async (ownerId: string, data: any) => {
+      try {
+        await api.saveUserData(ownerId, data);
+      } catch (err) {
+        console.error("Failed to save user data remotely:", err);
+        setToast({ message: "Error al guardar datos. Verifique su conexión.", type: 'error' });
+      }
+    }, 2000),
     []
   );
 
@@ -141,9 +168,25 @@ const App = () => {
     }
   }, [globalConfig, debouncedSaveConfig]);
 
+  const [originalUser, setOriginalUser] = useState<AppUser | null>(null);
   const [isBoletaModalOpen, setIsBoletaModalOpen] = useState(false);
   const [isAdminScheduleFullScreen, setIsAdminScheduleFullScreen] = useState(false);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'estudiantes' | 'asistencia' | 'calificaciones' | 'reportes' | 'alerta' | 'mi-panel' | 'config'>('dashboard');
+  const [enrollments, setEnrollments] = useState<Enrollment[]>([]);
+  const [editingEnrollment, setEditingEnrollment] = useState<Enrollment | null>(null);
+  const [viewingEnrollment, setViewingEnrollment] = useState<Enrollment | null>(null);
+  const [enrollmentSearch, setEnrollmentSearch] = useState('');
+  const [selectedEnrollmentStudent, setSelectedEnrollmentStudent] = useState<Student | null>(null);
+  const [enrollmentPaymentType, setEnrollmentPaymentType] = useState<'contado' | 'cuotas'>('contado');
+  const [enrollmentScholarship, setEnrollmentScholarship] = useState<'ninguna' | 'media' | 'completa'>('ninguna');
+  const [enrollmentFirstInstallment, setEnrollmentFirstInstallment] = useState(0);
+  const [enrollmentTotalAmount, setEnrollmentTotalAmount] = useState(0);
+  const [enrollmentMaterialsAmount, setEnrollmentMaterialsAmount] = useState(0);
+  const [enrollmentInstallmentsCount, setEnrollmentInstallmentsCount] = useState(1);
+  const [enrollmentClassStartDate, setEnrollmentClassStartDate] = useState('');
+  const [enrollmentPaymentMethod, setEnrollmentPaymentMethod] = useState<'efectivo' | 'transferencia' | 'billetera'>('efectivo');
+  const [enrollmentHistorySearch, setEnrollmentHistorySearch] = useState('');
+  const [enrollmentHistoryDate, setEnrollmentHistoryDate] = useState('');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'estudiantes' | 'asistencia' | 'calificaciones' | 'reportes' | 'alerta' | 'mi-panel' | 'config' | 'matricula'>('dashboard');
   const [activeConfigSubTab, setActiveConfigSubTab] = useState<'usuarios' | 'sistema'>('usuarios');
   const [activeReportSubTab, setActiveReportSubTab] = useState<'global' | 'personalizado'>('global');
   const [activeAlertaSubTab, setActiveAlertaSubTab] = useState<'registro' | 'historial'>('registro');
@@ -155,6 +198,7 @@ const App = () => {
   const [editingLevel, setEditingLevel] = useState<Level | null>(null);
   const [editingGradeLevel, setEditingGradeLevel] = useState<GradeLevel | null>(null);
   const [editingPeriod, setEditingPeriod] = useState<Period | null>(null);
+  const [calificarMaxScore, setCalificarMaxScore] = useState<number>(20);
   const [confirmModal, setConfirmModal] = useState<{
     title: string;
     message: string;
@@ -190,6 +234,7 @@ const App = () => {
   const [calificacionesMateriaFilter, setCalificacionesMateriaFilter] = useState("");
   const [calificacionesDateFilter, setCalificacionesDateFilter] = useState("");
   const [boletasSortOrder, setBoletasSortOrder] = useState<'merito' | 'demerito'>('merito');
+  const [registrosSortOrder, setRegistrosSortOrder] = useState<'ninguno' | 'merito' | 'demerito'>('ninguno');
   const adminScheduleRef = useRef<HTMLDivElement>(null);
 
   const handleDownloadAdminSchedule = useCallback(async () => {
@@ -318,17 +363,25 @@ const App = () => {
   const activeConfig = useMemo(() => {
     const config = currentUser?.config || globalConfig;
     return {
+      ...DEFAULT_CONFIG,
       ...globalConfig,
       ...config,
       theme: {
+        ...DEFAULT_CONFIG.theme,
         ...globalConfig.theme,
         ...(config.theme || {})
+      },
+      credentialConfig: {
+        ...(DEFAULT_CONFIG.credentialConfig || {}),
+        ...(globalConfig.credentialConfig || {}),
+        ...(config.credentialConfig || {})
       }
     };
   }, [currentUser, globalConfig]);
 
   // Search & Filters (Global/Students)
   const [searchTerm, setSearchTerm] = useState("");
+  const [dateFilter, setDateFilter] = useState("");
 
   // Report Filters
   const [reportSearchTerm, setReportSearchTerm] = useState("");
@@ -342,21 +395,39 @@ const App = () => {
 
   // Calificar Section State
   const [calificarSearchDni, setCalificarSearchDni] = useState("");
+  const [calificarSearchResults, setCalificarSearchResults] = useState<Student[]>([]);
   const [selectedCalificarStudent, setSelectedCalificarStudent] = useState<Student | null>(null);
   const [selectedExamType, setSelectedExamType] = useState("");
   const [buenas, setBuenas] = useState<number>(0);
   const [malas, setMalas] = useState<number>(0);
   const [blancas, setBlancas] = useState<number>(0);
   const [selectedCalificarMateria, setSelectedCalificarMateria] = useState("");
-  const [selectedCalificarPeriodo, setSelectedCalificarPeriodo] = useState("");
-  const [examTypes, setExamTypes] = useState<ExamType[]>([
-    { id: '1', name: 'Tarea', maxScore: 20, pointsPerGood: 2, pointsPerBad: 0, pointsPerBlank: 0, numQuestions: 10, isIndispensable: false, divisor: 1 },
-    { id: '2', name: 'Examen Parcial', maxScore: 20, pointsPerGood: 1, pointsPerBad: -0.25, pointsPerBlank: 0, numQuestions: 20, isIndispensable: true, divisor: 1 },
-    { id: '3', name: 'Examen Final', maxScore: 20, pointsPerGood: 1, pointsPerBad: -0.25, pointsPerBlank: 0, numQuestions: 20, isIndispensable: true, divisor: 1 },
-    { id: '4', name: 'Participación', maxScore: 20, pointsPerGood: 1, pointsPerBad: 0, pointsPerBlank: 0, numQuestions: 20, isIndispensable: false, divisor: 1 }
-  ]);
+  const [examTypes, setExamTypes] = useState<ExamType[]>(DEFAULT_CONFIG.examTypes);
   const [editingExamType, setEditingExamType] = useState<ExamType | null>(null);
   const [isExamTypeModalOpen, setIsExamTypeModalOpen] = useState(false);
+
+  // Sync examTypes with config
+  useEffect(() => {
+    const config = currentUser?.config || globalConfig;
+    if (config.examTypes && JSON.stringify(config.examTypes) !== JSON.stringify(examTypes)) {
+      setExamTypes(config.examTypes);
+    }
+  }, [currentUser, globalConfig.examTypes]);
+
+  useEffect(() => {
+    if (currentUser) {
+      const currentConfig = currentUser.config || globalConfig;
+      if (JSON.stringify(currentConfig.examTypes) !== JSON.stringify(examTypes)) {
+        const updatedUser = { ...currentUser, config: { ...currentConfig, examTypes } };
+        setCurrentUser(updatedUser);
+        setUsers(prev => prev.map(u => u.id === currentUser.id ? updatedUser : u));
+      }
+    } else {
+      if (JSON.stringify(globalConfig.examTypes) !== JSON.stringify(examTypes)) {
+        setGlobalConfig(prev => ({ ...prev, examTypes }));
+      }
+    }
+  }, [examTypes]);
 
   const calculatedScore = useMemo(() => {
     const currentExamType = examTypes.find(t => t.name === selectedExamType);
@@ -368,8 +439,8 @@ const App = () => {
                      (blancas * (currentExamType.pointsPerBlank || 0));
     
     // Calculate final grade using divisor
-    const divisor = currentExamType.divisor || 1;
-    const finalGrade = Math.max(0, Math.min(20, rawScore / divisor));
+    const divisor = currentExamType.divisor;
+    const finalGrade = (divisor && divisor > 0) ? (rawScore / divisor) : rawScore;
     
     return { rawScore, finalGrade };
   }, [selectedExamType, buenas, malas, blancas, examTypes]);
@@ -420,9 +491,19 @@ const App = () => {
   const [scanCooldown, setScanCooldown] = useState(false);
 
   // Audio/Haptic Feedback
+  const audioCtxRef = useRef<AudioContext | null>(null);
   const playChime = useCallback(() => {
     try {
-      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      if (!audioCtxRef.current) {
+        audioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+      }
+      const audioCtx = audioCtxRef.current;
+      
+      // Resume context if it's suspended (common in browsers until user interaction)
+      if (audioCtx.state === 'suspended') {
+        audioCtx.resume();
+      }
+
       const oscillator = audioCtx.createOscillator();
       const gainNode = audioCtx.createGain();
 
@@ -511,7 +592,19 @@ const App = () => {
   const loadUserData = async (user: AppUser) => {
     try {
       isRemoteUpdate.current = true;
-      const ownerId = user.parentId || user.id;
+      // Clear current states before loading new data
+      setStudents([]);
+      setAttendance([]);
+      setGrades([]);
+      setIncidences([]);
+      setGradeLevels([]);
+      setSchedules([]);
+      setShifts([]);
+      setConsultationLogs([]);
+      setConductActions([]);
+      setEnrollments([]);
+
+      const ownerId = user.linkedUserId || user.parentId || user.id;
       const data = await api.fetchUserData(ownerId);
       if (data && Object.keys(data).length > 0) {
         setStudents(data.students || []);
@@ -549,6 +642,7 @@ const App = () => {
         ]);
         setConsultationLogs(data.consultationLogs || []);
         setConductActions(data.conductActions || []);
+        setEnrollments(data.enrollments || []);
       }
       setTimeout(() => { isRemoteUpdate.current = false; }, 500);
     } catch (e) {
@@ -558,37 +652,49 @@ const App = () => {
     }
   };
 
-  const saveUserData = async () => {
-    // If not authenticated, we save to the first admin's data to support public features
-    const firstAdmin = users.find(u => u.role === 'admin');
-    if (!isAuthenticated && !firstAdmin) return;
-    
-    try {
-      const ownerId = currentUser ? (currentUser.parentId || currentUser.id) : firstAdmin!.id;
-      const dataToSave = {
-        students,
-        attendance,
-        grades,
-        incidences,
-        courses,
-        gradeLevels,
-        schedules,
-        shifts,
-        sections,
-        levels,
-        gradeTypes,
-        timeSlots,
-        schoolDays,
-        incidenceTypes,
-        consultationLogs,
-        conductActions
-      };
-      await api.saveUserData(ownerId, dataToSave);
-    } catch (e) {
-      console.error("Error saving user data", e);
-      setToast({ message: "Error al guardar datos. Verifique su conexión.", type: 'error' });
+  useEffect(() => {
+    if (isAuthenticated && currentUser) {
+      loadUserData(currentUser);
     }
+  }, [isAuthenticated, currentUser]);
+
+  useEffect(() => {
+    if (activeConfigSubTab === 'sistema' && !pendingConfig) {
+      setPendingConfig(globalConfig);
+    }
+  }, [activeConfigSubTab, globalConfig, pendingConfig]);
+
+  const handlePublishConfig = async () => {
+    if (!pendingConfig) return;
+    setGlobalConfig(pendingConfig);
+    await api.saveConfig(pendingConfig);
+    setToast({ message: "Configuración publicada exitosamente", type: 'success' });
+    setPendingConfig(null);
   };
+
+  const saveUserData = useCallback(() => {
+    if (!isAuthenticated || !currentUser) return;
+    const ownerId = currentUser.linkedUserId || currentUser.parentId || currentUser.id;
+    const dataToSave = {
+      students,
+      attendance,
+      grades,
+      incidences,
+      courses,
+      gradeLevels,
+      schedules,
+      shifts,
+      sections,
+      levels,
+      gradeTypes,
+      timeSlots,
+      schoolDays,
+      incidenceTypes,
+      consultationLogs,
+      conductActions
+    };
+    debouncedSaveUserData(ownerId, dataToSave);
+  }, [isAuthenticated, currentUser, users, students, attendance, grades, incidences, courses, gradeLevels, schedules, shifts, sections, levels, gradeTypes, timeSlots, schoolDays, incidenceTypes, consultationLogs, conductActions, debouncedSaveUserData]);
 
   useEffect(() => {
     loadInitialData();
@@ -757,6 +863,7 @@ const App = () => {
 
     const newAction: ConductAction = {
       id: Date.now().toString(),
+      ownerId: currentUser?.parentId || currentUser?.id || 'admin-1',
       studentId,
       type,
       categoryName: category.name,
@@ -777,6 +884,7 @@ const App = () => {
     if (type === 'demerit') {
       const newIncidence: Incidence = {
         id: `inc-${Date.now()}`,
+        ownerId: currentUser?.parentId || currentUser?.id || 'admin-1',
         studentId: student.id,
         studentName: `${student.nombre} ${student.apellido}`,
         studentDni: student.dni,
@@ -798,6 +906,8 @@ const App = () => {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${window.location.host}`;
     const socket = new WebSocket(wsUrl);
+    socket.onerror = (err) => console.error("WebSocket error:", err);
+    socket.onclose = () => console.log("WebSocket connection closed.");
 
     socket.onopen = () => {
       if (isAuthenticated && currentUser) {
@@ -856,37 +966,17 @@ const App = () => {
 
   useEffect(() => {
     if (!isRemoteUpdate.current) {
-      // If authenticated, save normally. If not, only save if we have users loaded (to get the first admin)
-      if (isAuthenticated && currentUser) {
-        const timer = setTimeout(() => {
-          saveUserData();
-        }, 1000);
-        return () => clearTimeout(timer);
-      } else if (!isAuthenticated && users.length > 0) {
-        // Only save if we are on landing page and something changed
-        const timer = setTimeout(() => {
-          saveUserData();
-        }, 1000);
-        return () => clearTimeout(timer);
+      if ((isAuthenticated && currentUser) || (!isAuthenticated && users.length > 0)) {
+        saveUserData();
       }
     }
-  }, [students, attendance, grades, incidences, courses, gradeLevels, schedules, shifts, sections, levels, consultationLogs, conductActions, gradeTypes, timeSlots, schoolDays, incidenceTypes]);
+  }, [students, attendance, grades, incidences, courses, gradeLevels, schedules, shifts, sections, levels, consultationLogs, conductActions, gradeTypes, timeSlots, schoolDays, incidenceTypes, saveUserData, isAuthenticated, currentUser, users.length]);
 
   useEffect(() => {
     if (users.length > 0 && !isRemoteUpdate.current) {
-      api.saveUsers(users).catch(e => {
-        console.error("Error saving users", e);
-        setToast({ message: "Error al guardar usuarios. Verifique su conexión.", type: 'error' });
-      });
+      debouncedSaveUsers(users);
     }
-  }, [users]);
-
-  useEffect(() => {
-    api.saveConfig(globalConfig).catch(e => {
-      console.error("Error saving config", e);
-      setToast({ message: "Error al guardar configuración. Verifique su conexión.", type: 'error' });
-    });
-  }, [globalConfig]);
+  }, [users, debouncedSaveUsers]);
 
   // --- Dynamic Theme Application ---
   useEffect(() => {
@@ -894,12 +984,15 @@ const App = () => {
   }, [activeConfig.siteName]);
 
   useEffect(() => {
-    const config = currentUser?.config || globalConfig;
-    document.documentElement.style.setProperty('--primary-color', config.theme.primaryColor);
-    document.documentElement.style.setProperty('--primary-color-15', config.theme.primaryColor + '15');
-    document.documentElement.style.setProperty('--secondary-color', config.theme.secondaryColor);
-    document.documentElement.style.setProperty('--font-family', config.theme.fontFamily);
-  }, [currentUser, globalConfig]);
+    document.documentElement.style.setProperty('--primary-color', activeConfig.theme.primaryColor);
+    document.documentElement.style.setProperty('--primary-color-15', activeConfig.theme.primaryColor + '15');
+    document.documentElement.style.setProperty('--secondary-color', activeConfig.theme.secondaryColor);
+    document.documentElement.style.setProperty('--font-family', activeConfig.theme.fontFamily);
+    
+    // Sidebar and Topbar background variables
+    document.documentElement.style.setProperty('--sidebar-bg', activeConfig.theme.primaryColor);
+    document.documentElement.style.setProperty('--topbar-bg', activeConfig.theme.secondaryColor);
+  }, [activeConfig]);
 
   // --- Gemini AI Logic ---
   const generateAiReport = async () => {
@@ -996,6 +1089,7 @@ const App = () => {
 
       const newEntry: Attendance = {
         id: Date.now().toString(),
+        ownerId: currentUser?.parentId || currentUser?.id || 'admin-1',
         studentDni: person.dni,
         studentId: person.id,
         studentName: `${person.nombre} ${person.apellido}`,
@@ -1082,7 +1176,7 @@ const App = () => {
 
   const startScanner = useCallback(async () => {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      alert("Su navegador no soporta el acceso a la cámara o no está en un entorno seguro (HTTPS).");
+      setToast({ message: "Su navegador no soporta el acceso a la cámara o no está en un entorno seguro (HTTPS).", type: 'error' });
       return;
     }
 
@@ -1120,7 +1214,7 @@ const App = () => {
         errorMsg = "La cámara está siendo usada por otra aplicación.";
       }
       
-      alert(`${errorMsg}\n\nDetalle: ${err.message || 'Desconocido'}`);
+      setToast({ message: `${errorMsg} Detalle: ${err.message || 'Desconocido'}`, type: 'error' });
     }
   }, [scanFrame]);
 
@@ -1163,9 +1257,17 @@ const App = () => {
     // Handle permissions
     let permissions: string[] = [];
     if (isMainAdmin) {
-      permissions = ['dashboard', 'estudiantes', 'asistencia', 'reportes', 'alerta', 'calificaciones', 'mi-panel', 'config'];
+      permissions = ['dashboard', 'estudiantes', 'asistencia', 'reportes', 'alerta', 'calificaciones', 'mi-panel', 'config', 'matricula'];
       // Grant all sub-permissions too
-      permissions.push('mi-panel:perfil', 'mi-panel:grados', 'mi-panel:horarios', 'mi-panel:alerta', 'mi-panel:profesores');
+      permissions.push(
+        'mi-panel:perfil', 'mi-panel:grados', 'mi-panel:horarios', 'mi-panel:alerta', 'mi-panel:profesores',
+        'mi-panel:horarios:turnos', 'mi-panel:horarios:config', 'mi-panel:horarios:materias', 'mi-panel:horarios:creador',
+        'mi-panel:grados:niveles', 'mi-panel:grados:grados', 'mi-panel:grados:secciones',
+        'calificaciones:lista', 'calificaciones:registros', 'calificaciones:boletas', 'calificaciones:calificar',
+        'alerta:registro', 'alerta:historial',
+        'reportes:global', 'reportes:personalizado',
+        'config:usuarios', 'config:sistema'
+      );
     } else {
       // Get selected permissions from form
       const selectedPerms = formData.getAll('permissions') as string[];
@@ -1187,8 +1289,10 @@ const App = () => {
       role: role,
       permissions: permissions,
       config: editingUser?.config,
-      parentId: editingUser ? editingUser.parentId : (currentUser?.role === 'admin' && !currentUser.parentId ? undefined : currentUser?.id),
-      studentId: formData.get('studentId') as string || undefined
+      parentId: editingUser ? editingUser.parentId : (formData.get('hasOwnDatabase') === 'on' ? undefined : (role === 'enrolador' ? (formData.get('linkedUserId') as string || currentUser?.id) : (currentUser?.role === 'admin' && !currentUser.parentId ? undefined : currentUser?.id))),
+      studentId: formData.get('studentId') as string || undefined,
+      linkedUserId: formData.get('linkedUserId') as string || undefined,
+      hasOwnDatabase: formData.get('hasOwnDatabase') === 'on'
     };
 
     if (!isNewUser) {
@@ -1246,13 +1350,16 @@ const App = () => {
     const formData = new FormData(e.currentTarget);
     const studentData: Student = {
       id: editingStudent ? editingStudent.id : Date.now().toString(),
+      ownerId: currentUser?.parentId || currentUser?.id || 'admin-1',
       nombre: formData.get('nombre') as string,
       apellido: formData.get('apellido') as string,
       dni: formData.get('dni') as string,
       nivel: formData.get('nivel') as any,
       grado: formData.get('grado') as string,
       seccion: formData.get('seccion') as string,
-      turno: (formData.get('turno') as string) || 'Sin asignar',
+      schoolName: formData.get('schoolName') as string,
+      studentPhone: formData.get('studentPhone') as string,
+      registrationDate: editingStudent?.registrationDate || new Date().toISOString().split('T')[0],
       rol: formData.get('rol') as any,
       celularApoderado: formData.get('celularApoderado') as string,
       email: formData.get('email') as string,
@@ -1307,29 +1414,49 @@ const App = () => {
         const workbook = XLSX.read(data, { type: 'array' });
         const sheetName = workbook.SheetNames[0];
         const worksheet = workbook.Sheets[sheetName];
-        const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[][];
+        const jsonData = XLSX.utils.sheet_to_json(worksheet) as any[];
         
-        const rows = jsonData.slice(1); // Skip header
-        const newEntries: Student[] = rows.map((row): Student | null => {
-          if (!row || row.length < 3) return null;
-          const [nombre, apellido, dni, nivel, grado, seccion, turno, rol, celular, email] = row;
+        const newEntries: Student[] = jsonData.map((row): Student | null => {
+          const nombre = row.Nombre || row.nombre;
+          const apellido = row.Apellido || row.apellido;
+          const dni = String(row.DNI || row.dni || '').trim();
+          if (!nombre && !dni) return null;
+
           return {
             id: Math.random().toString(36).substr(2, 9),
+            ownerId: currentUser?.parentId || currentUser?.id || 'admin-1',
             nombre: String(nombre || 'Sin Nombre').trim(),
             apellido: String(apellido || '').trim(),
-            dni: String(dni || '0').trim(),
-            nivel: (String(nivel || 'Primaria').trim() as any),
-            grado: String(grado || '1° Grado').trim(),
-            seccion: String(seccion || 'A').trim(),
-            turno: String(turno || 'Mañana').trim(),
-            rol: (String(rol || 'Estudiante').trim() as any),
-            celularApoderado: String(celular || '').trim(),
-            email: String(email || '').trim()
+            dni: dni || '0',
+            nivel: (String(row.Nivel || row.nivel || 'Primaria').trim() as any),
+            grado: String(row.Grado || row.grado || '1° Grado').trim(),
+            seccion: String(row.Seccion || row.seccion || 'A').trim(),
+            schoolName: String(row.Colegio || row.schoolName || '').trim(),
+            studentPhone: String(row.CelularEstudiante || row.studentPhone || '').trim(),
+            registrationDate: String(row.FechaReg || row.registrationDate || new Date().toISOString().split('T')[0]).trim(),
+            rol: (String(row.Rol || row.rol || 'Estudiante').trim() as any),
+            celularApoderado: String(row.CelularApoderado || row.celularApoderado || '').trim(),
+            email: String(row.Email || row.email || '').trim(),
+            siteName: String(row.Sitio || row.siteName || '').trim(),
+            slogan: String(row.Slogan || row.slogan || '').trim()
           };
         }).filter((s): s is Student => s !== null);
         
-        setStudents(prev => [...newEntries, ...prev]);
-        setToast({ message: `${newEntries.length} estudiantes importados con éxito`, type: 'success' });
+        setStudents(prev => {
+          const updated = [...prev];
+          newEntries.forEach(newStudent => {
+            const index = updated.findIndex(s => s.dni === newStudent.dni);
+            if (index !== -1) {
+              // Update existing student with new data, keeping the same ID
+              updated[index] = { ...updated[index], ...newStudent, id: updated[index].id };
+            } else {
+              // Add new student
+              updated.unshift(newStudent);
+            }
+          });
+          return updated;
+        });
+        setToast({ message: `${newEntries.length} registros procesados con éxito`, type: 'success' });
       } catch (error) {
         console.error("Error importing file:", error);
         setToast({ message: "Error al importar el archivo. Asegúrese de que sea un formato válido.", type: 'error' });
@@ -1339,13 +1466,34 @@ const App = () => {
   };
 
   const handleExportCSV = () => {
-    const headers = "Nombre,Apellido,DNI,Grado,Seccion,Turno,Rol,Celular,Email\n";
-    const csvContent = students.map(s => `${s.nombre},${s.apellido},${s.dni},${s.grado},${s.seccion},${s.turno},${s.rol},${s.celularApoderado || ''},${s.email || ''}`).join("\n");
-    const blob = new Blob([headers + csvContent], { type: 'text/csv' });
+    const dataToExport = students.map(s => ({
+      Nombre: s.nombre,
+      Apellido: s.apellido,
+      DNI: s.dni,
+      Nivel: s.nivel,
+      Grado: s.grado,
+      Seccion: s.seccion,
+      Colegio: s.schoolName || '',
+      CelularEstudiante: s.studentPhone || '',
+      FechaReg: s.registrationDate || '',
+      Rol: s.rol,
+      CelularApoderado: s.celularApoderado || '',
+      Email: s.email || '',
+      Sitio: s.siteName || '',
+      Slogan: s.slogan || ''
+    }));
+
+    const worksheet = XLSX.utils.json_to_sheet(dataToExport);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Estudiantes");
+    
+    // Generate CSV using XLSX to ensure proper escaping and structure
+    const csvOutput = XLSX.utils.sheet_to_csv(worksheet);
+    const blob = new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), csvOutput], { type: 'text/csv;charset=utf-8;' });
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `reporte_educativo_${new Date().toISOString().split('T')[0]}.csv`;
+    a.download = `reporte_estudiantes_${new Date().toISOString().split('T')[0]}.csv`;
     a.click();
   };
 
@@ -1464,7 +1612,7 @@ const App = () => {
       window.URL.revokeObjectURL(url);
     } catch (error) {
       console.error("Error generating zip:", error);
-      alert("Error al generar el archivo de credenciales.");
+      setToast({ message: "Error al generar el archivo de credenciales.", type: 'error' });
     } finally {
       document.body.removeChild(hiddenContainer);
       setIsDownloadingAll(false);
@@ -1495,7 +1643,7 @@ const App = () => {
       a.click();
     } catch (error) {
       console.error("Error downloading JPG:", error);
-      alert("Error al descargar la imagen.");
+      setToast({ message: "Error al descargar la imagen.", type: 'error' });
     }
   };
 
@@ -1505,9 +1653,11 @@ const App = () => {
   };
 
   // --- Filtering Logic ---
-  const filteredEntries = students.filter(s => 
-    `${s.nombre} ${s.apellido} ${s.dni}`.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredEntries = students.filter(s => {
+    const matchesSearch = `${s.nombre} ${s.apellido} ${s.dni} ${s.schoolName || ''} ${s.studentPhone || ''}`.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesDate = !dateFilter || (s.registrationDate && s.registrationDate === dateFilter);
+    return matchesSearch && matchesDate;
+  });
 
   const filteredAttendance = attendance.filter(a => {
     const matchesSearch = a.studentName.toLowerCase().includes(attSearch.toLowerCase()) || a.studentDni?.includes(attSearch) || a.studentId.includes(attSearch);
@@ -1589,14 +1739,16 @@ const App = () => {
   };
 
   const exportGradesToExcel = (filteredGrades: any[]) => {
-    const data = filteredGrades.map(g => {
+    const data = filteredGrades.map((g, index) => {
       const student = students.find(s => s.id === g.studentId);
       return {
+        'Puesto': index + 1,
         'Alumno': g.studentName,
         'DNI': student?.dni || "",
         'Grado': student?.grado || "",
         'Sección': student?.seccion || "",
         'Materia': g.materia,
+        'Puntos': g.rawScore || 0,
         'Nota': g.nota,
         'Fecha': g.fecha
       };
@@ -1618,16 +1770,18 @@ const App = () => {
     doc.setFontSize(10);
     doc.text(`Fecha de generación: ${new Date().toLocaleString()}`, 14, 32);
 
-    const tableData = filteredGrades.map(g => [
+    const tableData = filteredGrades.map((g, index) => [
+      index + 1,
       g.studentName,
       g.materia,
+      g.rawScore?.toFixed(1) || '-',
       g.nota.toString().padStart(2, '0'),
       g.fecha
     ]);
 
     autoTable(doc, {
       startY: 40,
-      head: [['Alumno', 'Materia / Tipo', 'Nota', 'Fecha']],
+      head: [['Puesto', 'Alumno', 'Materia / Tipo', 'Puntos', 'Nota', 'Fecha']],
       body: tableData,
       theme: 'grid',
       headStyles: { fillColor: activeConfig.theme.primaryColor || '#1e3a8a' }
@@ -1820,8 +1974,9 @@ const App = () => {
 
     // Detailed History
     doc.setFont("helvetica", "bold");
-    doc.text("HISTORIAL DETALLADO POR FECHA", 15, (doc as any).lastAutoTable.finalY + 15);
-    doc.line(15, (doc as any).lastAutoTable.finalY + 17, 195, (doc as any).lastAutoTable.finalY + 17);
+    const currentY = (doc as any).lastAutoTable?.finalY || 100;
+    doc.text("HISTORIAL DETALLADO POR FECHA", 15, currentY + 15);
+    doc.line(15, currentY + 17, 195, currentY + 17);
 
     const historyData = attendanceData
       .sort((a, b) => {
@@ -1837,7 +1992,7 @@ const App = () => {
       ]);
 
     autoTable(doc, {
-      startY: (doc as any).lastAutoTable.finalY + 20,
+      startY: ((doc as any).lastAutoTable?.finalY || 120) + 20,
       head: [['Fecha', 'Ingreso', 'Salida', 'Estado']],
       body: historyData,
       theme: 'grid',
@@ -1864,6 +2019,7 @@ const App = () => {
         // Map imported data to Attendance objects
         const importedAttendance: Attendance[] = data.map((item: any) => ({
           id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+          ownerId: currentUser?.parentId || currentUser?.id || 'admin-1',
           studentDni: item.DNI?.toString() || '',
           studentId: '', // We might need to find the student ID
           studentName: item.Nombre || '',
@@ -1874,10 +2030,10 @@ const App = () => {
         }));
 
         setAttendance([...importedAttendance, ...attendance]);
-        alert(`${importedAttendance.length} registros importados con éxito.`);
+        setToast({ message: `${importedAttendance.length} registros importados con éxito.`, type: 'success' });
       } catch (error) {
         console.error("Error importing Excel:", error);
-        alert("Error al procesar el archivo Excel. Asegúrese de que tenga las columnas: DNI, Nombre, Rol, Estado, Hora, Fecha.");
+        setToast({ message: "Error al procesar el archivo Excel. Asegúrese de que tenga las columnas: DNI, Nombre, Rol, Estado, Hora, Fecha.", type: 'error' });
       }
     };
     reader.readAsBinaryString(file);
@@ -1927,6 +2083,168 @@ const App = () => {
       stopScanner();
     }
   }, [activeTab, isAuthenticated, isScannerModalOpen, stopScanner]);
+
+  const generateEnrollmentPDF = (enrollment: Enrollment) => {
+    const doc = new jsPDF({
+      orientation: 'portrait',
+      unit: 'mm',
+      format: 'a4'
+    });
+
+    // Header
+    doc.setFillColor(15, 23, 42);
+    doc.rect(0, 0, 210, 40, 'F');
+    
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(24);
+    doc.setFont('helvetica', 'bold');
+    doc.text(globalConfig.siteName.toUpperCase(), 105, 20, { align: 'center' });
+    
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'normal');
+    doc.text(globalConfig.slogan || "Gestión Educativa Inteligente", 105, 28, { align: 'center' });
+
+    // Receipt Info
+    doc.setTextColor(15, 23, 42);
+    doc.setFontSize(18);
+    doc.setFont('helvetica', 'bold');
+    doc.text(`BOLETA DE MATRÍCULA #${enrollment.receiptNumber}`, 105, 55, { align: 'center' });
+
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Fecha: ${enrollment.date}`, 20, 70);
+    doc.text(`Atendido por: ${enrollment.attendedBy}`, 20, 76);
+
+    // Student Info
+    doc.setFillColor(248, 250, 252);
+    doc.rect(20, 85, 170, 35, 'F');
+    doc.setDrawColor(226, 232, 240);
+    doc.rect(20, 85, 170, 35, 'S');
+
+    doc.setFont('helvetica', 'bold');
+    doc.text("DATOS DEL ESTUDIANTE", 25, 92);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Nombre: ${enrollment.studentName}`, 25, 100);
+    doc.text(`DNI: ${enrollment.studentDni}`, 25, 106);
+    doc.text(`Inicio de Clases: ${enrollment.classStartDate}`, 25, 112);
+
+    // Payment Details
+    doc.setFont('helvetica', 'bold');
+    doc.text("DETALLES DEL PAGO", 25, 135);
+
+    const tableData = [
+      ["Concepto", "Monto"],
+      ["Monto Total de Matrícula", `S/ ${enrollment.totalAmount}`],
+      ["Monto de Materiales", `S/ ${enrollment.materialsAmount}`],
+      ["Tipo de Beca", enrollment.scholarshipType.toUpperCase()],
+      ["Tipo de Pago", enrollment.paymentType.toUpperCase()]
+    ];
+
+    if (enrollment.paymentType === 'cuotas') {
+      tableData.push(["N° de Cuotas", enrollment.installmentsCount?.toString() || "N/A"]);
+      tableData.push(["Pago Inicial (Primera Cuota)", `S/ ${enrollment.firstInstallment}`]);
+    }
+
+    autoTable(doc, {
+      startY: 140,
+      head: [tableData[0]],
+      body: tableData.slice(1),
+      theme: 'striped',
+      headStyles: { fillColor: [15, 23, 42], textColor: [255, 255, 255], fontStyle: 'bold' },
+      styles: { fontSize: 10, cellPadding: 5 }
+    });
+
+    // Total
+    const finalY = (doc as any).lastAutoTable?.finalY || 180;
+    doc.setFontSize(14);
+    doc.setFont('helvetica', 'bold');
+    
+    let totalToPay = 0;
+    let baseAmount = enrollment.totalAmount;
+    if (enrollment.scholarshipType === 'completa') {
+      baseAmount = 0;
+    } else if (enrollment.scholarshipType === 'media') {
+      baseAmount = enrollment.totalAmount / 2;
+    }
+    totalToPay = baseAmount + (enrollment.materialsAmount || 0);
+
+    doc.text(`TOTAL FINAL: S/ ${totalToPay}`, 190, finalY + 10, { align: 'right' });
+
+    if (enrollment.paymentType === 'cuotas' && enrollment.installmentsCount) {
+      const cuotaAmount = baseAmount / enrollment.installmentsCount;
+      const paidNow = enrollment.firstInstallment || 0;
+      const remaining = totalToPay - paidNow;
+      
+      doc.setFontSize(10);
+      doc.text(`Monto por Cuota: S/ ${cuotaAmount.toFixed(2)}`, 190, finalY + 18, { align: 'right' });
+      doc.text(`Saldo Pendiente: S/ ${remaining.toFixed(2)}`, 190, finalY + 24, { align: 'right' });
+    }
+
+    doc.setFontSize(10);
+    doc.text(`Método de Pago: ${(enrollment.paymentMethod || 'Efectivo').toUpperCase()}`, 25, finalY + 10);
+
+    // Disclaimer Footer
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(15, 23, 42);
+    const disclaimer = "ACEPTO TODOS LOS DERECHOS Y SOY CONCIENTE DEL PAGO QUE ESTOY REALIZANDO. NO HAY DEVOLUCIONES POSTERIORMENTE DESPUES DE REALIZAR EL PAGO.";
+    const splitDisclaimer = doc.splitTextToSize(disclaimer, 170);
+    doc.text(splitDisclaimer, 105, 260, { align: 'center' });
+
+    // Footer
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'italic');
+    doc.setTextColor(148, 163, 184);
+    doc.text(globalConfig.footerText || "Gracias por confiar en nuestra institución.", 105, 280, { align: 'center' });
+
+    doc.save(`Boleta_Matricula_${enrollment.receiptNumber}.pdf`);
+  };
+
+  const handleUpdateEnrollment = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!editingEnrollment) return;
+    
+    const formData = new FormData(e.currentTarget);
+    const updated: Enrollment = {
+      ...editingEnrollment,
+      paymentType: formData.get('paymentType') as any,
+      scholarshipType: formData.get('scholarshipType') as any,
+      totalAmount: parseFloat(formData.get('totalAmount') as string),
+      materialsAmount: parseFloat(formData.get('materialsAmount') as string),
+      firstInstallment: formData.get('firstInstallment') ? parseFloat(formData.get('firstInstallment') as string) : undefined,
+      installmentsCount: formData.get('installmentsCount') ? parseInt(formData.get('installmentsCount') as string) : undefined,
+      classStartDate: formData.get('classStartDate') as string,
+    };
+    
+    setEnrollments(enrollments.map(en => en.id === updated.id ? updated : en));
+    setEditingEnrollment(null);
+    setToast({ message: "Matrícula actualizada con éxito", type: 'success' });
+  };
+
+  const shareEnrollmentWhatsApp = (enrollment: Enrollment) => {
+    let baseAmount = enrollment.totalAmount;
+    if (enrollment.scholarshipType === 'completa') {
+      baseAmount = 0;
+    } else if (enrollment.scholarshipType === 'media') {
+      baseAmount = enrollment.totalAmount / 2;
+    }
+    const totalToPay = baseAmount + (enrollment.materialsAmount || 0);
+    const remaining = enrollment.paymentType === 'cuotas' ? totalToPay - (enrollment.firstInstallment || 0) : 0;
+
+    const message = `*BOLETA DE MATRÍCULA #${enrollment.receiptNumber}*\n\n` +
+      `*Estudiante:* ${enrollment.studentName}\n` +
+      `*DNI:* ${enrollment.studentDni}\n` +
+      `*Fecha:* ${enrollment.date}\n` +
+      `*Tipo:* ${enrollment.paymentType.toUpperCase()}\n` +
+      `*Beca:* ${enrollment.scholarshipType.toUpperCase()}\n` +
+      `*Método:* ${(enrollment.paymentMethod || 'Efectivo').toUpperCase()}\n` +
+      `*Total:* S/ ${totalToPay}\n` +
+      (enrollment.paymentType === 'cuotas' ? `*Pagado:* S/ ${enrollment.firstInstallment}\n*Saldo:* S/ ${remaining.toFixed(2)}\n` : '') +
+      `*Inicio Clases:* ${enrollment.classStartDate}\n\n` +
+      `_Acepto todos los derechos y soy conciente del pago realizado. No hay devoluciones._`;
+    
+    window.open(`https://wa.me/?text=${encodeURIComponent(message)}`, '_blank');
+  };
 
   const handleConsultasSearch = (dni: string) => {
     const pub = globalConfig.publicModules || { attendance: true, alerts: true, schedule: true, grades: true };
@@ -2018,6 +2336,7 @@ const App = () => {
     { id: 'estudiantes', icon: Database, label: 'Base de Datos' },
     { id: 'asistencia', icon: CalendarCheck, label: 'Asistencia' },
     { id: 'reportes', icon: FileText, label: 'Reportes' },
+    { id: 'matricula', icon: FileSpreadsheet, label: 'Matrícula' },
     { id: 'alerta', icon: AlertCircle, label: 'ALERTA' },
     { id: 'calificaciones', icon: BarChart3, label: 'Calificaciones' },
     { id: 'mi-panel', icon: User, label: 'Mi Panel' },
@@ -2105,6 +2424,14 @@ const App = () => {
             isMobileMenuOpen={isMobileMenuOpen} 
             onLogout={handleLogout} 
             navItems={navItems}
+            originalUser={originalUser}
+            onBackToOriginal={() => {
+              if (originalUser) {
+                setCurrentUser(originalUser);
+                setOriginalUser(null);
+                setToast({ message: `Regresando a la cuenta de ${originalUser.username}`, type: 'success' });
+              }
+            }}
           />
 
           <div className="flex-1 flex flex-col overflow-hidden">
@@ -2137,18 +2464,22 @@ const App = () => {
                   <p className="text-slate-500 font-medium">Reportes Institucionales - Análisis y exportación de datos.</p>
                 </div>
                 <div className="flex flex-row bg-white p-2 rounded-2xl shadow-xl border border-slate-100 overflow-x-auto no-scrollbar">
-                  <button 
-                    onClick={() => setActiveReportSubTab('global')}
-                    className={`px-6 py-3 rounded-xl font-black uppercase tracking-widest text-[10px] transition-all whitespace-nowrap ${activeReportSubTab === 'global' ? 'bg-blue-600 text-white shadow-lg' : 'bg-white text-slate-400 border border-slate-200 hover:border-blue-200'}`}
-                  >
-                    Reporte Global
-                  </button>
-                  <button 
-                    onClick={() => setActiveReportSubTab('personalizado')}
-                    className={`px-6 py-3 rounded-xl font-black uppercase tracking-widest text-[10px] transition-all whitespace-nowrap ${activeReportSubTab === 'personalizado' ? 'bg-blue-600 text-white shadow-lg' : 'bg-white text-slate-400 border border-slate-200 hover:border-blue-200'}`}
-                  >
-                    Personalizado
-                  </button>
+                  {(currentUser?.role === 'admin' || currentUser?.permissions.includes('reportes:global')) && (
+                    <button 
+                      onClick={() => setActiveReportSubTab('global')}
+                      className={`px-6 py-3 rounded-xl font-black uppercase tracking-widest text-[10px] transition-all whitespace-nowrap ${activeReportSubTab === 'global' ? 'bg-blue-600 text-white shadow-lg' : 'bg-white text-slate-400 border border-slate-200 hover:border-blue-200'}`}
+                    >
+                      Reporte Global
+                    </button>
+                  )}
+                  {(currentUser?.role === 'admin' || currentUser?.permissions.includes('reportes:personalizado')) && (
+                    <button 
+                      onClick={() => setActiveReportSubTab('personalizado')}
+                      className={`px-6 py-3 rounded-xl font-black uppercase tracking-widest text-[10px] transition-all whitespace-nowrap ${activeReportSubTab === 'personalizado' ? 'bg-blue-600 text-white shadow-lg' : 'bg-white text-slate-400 border border-slate-200 hover:border-blue-200'}`}
+                    >
+                      Personalizado
+                    </button>
+                  )}
                 </div>
               </header>
 
@@ -2535,6 +2866,319 @@ const App = () => {
             </div>
           )}
 
+          {activeTab === 'matricula' && (
+            <div className="animate-slide-up space-y-8">
+              <header className="flex flex-col md:flex-row justify-between items-center gap-6">
+                <div className="text-center md:text-left">
+                  <h2 className="text-3xl md:text-4xl font-black text-slate-800 tracking-tight">Módulo de Matrícula</h2>
+                  <p className="text-slate-500 font-medium text-sm md:text-base">Gestión de inscripciones, pagos y boletas.</p>
+                </div>
+              </header>
+
+              <div className="bg-white p-8 rounded-[3.5rem] shadow-2xl border border-slate-200 space-y-8">
+                <div className="max-w-2xl mx-auto space-y-6">
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">Buscar Estudiante (Nombre o DNI)</label>
+                    <div className="relative">
+                      <Search className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
+                      <input 
+                        type="text" 
+                        placeholder="Ingrese nombre o DNI..." 
+                        className="w-full pl-14 pr-6 py-4 rounded-2xl bg-slate-50 border-2 border-transparent focus:border-blue-500 focus:bg-white outline-none text-lg font-bold transition-all shadow-inner"
+                        value={enrollmentSearch}
+                        onChange={(e) => {
+                          setEnrollmentSearch(e.target.value);
+                          const found = students.find(s => 
+                            s.dni.includes(e.target.value) || 
+                            `${s.nombre} ${s.apellido}`.toLowerCase().includes(e.target.value.toLowerCase())
+                          );
+                          if (found) setSelectedEnrollmentStudent(found);
+                          else setSelectedEnrollmentStudent(null);
+                        }}
+                      />
+                    </div>
+                  </div>
+
+                  {selectedEnrollmentStudent && (
+                    <div className="animate-slide-up space-y-8">
+                      <div className="bg-blue-50 p-6 rounded-3xl border border-blue-100 flex items-center gap-6">
+                        <div className="w-20 h-20 rounded-2xl bg-white p-1 shadow-md">
+                          <div className="w-full h-full rounded-xl bg-slate-100 flex items-center justify-center overflow-hidden">
+                            {selectedEnrollmentStudent.foto ? <img src={selectedEnrollmentStudent.foto} className="w-full h-full object-cover" /> : <User size={32} className="text-slate-300" />}
+                          </div>
+                        </div>
+                        <div>
+                          <h4 className="text-xl font-black text-slate-800 uppercase tracking-tight">{selectedEnrollmentStudent.nombre} {selectedEnrollmentStudent.apellido}</h4>
+                          <p className="text-xs font-bold text-slate-500 uppercase">{selectedEnrollmentStudent.grado} "{selectedEnrollmentStudent.seccion}" - {selectedEnrollmentStudent.nivel}</p>
+                          <p className="text-[10px] font-black text-blue-600 uppercase tracking-widest mt-1">DNI: {selectedEnrollmentStudent.dni}</p>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                        <div className="space-y-6">
+                          <div className="space-y-2">
+                            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">Tipo de Pago</label>
+                            <div className="grid grid-cols-2 gap-4">
+                              <button 
+                                onClick={() => setEnrollmentPaymentType('contado')}
+                                className={`py-4 rounded-2xl font-black uppercase tracking-widest text-xs transition-all ${enrollmentPaymentType === 'contado' ? 'bg-slate-900 text-white shadow-lg' : 'bg-slate-50 text-slate-400 border border-slate-100'}`}
+                              >Al Contado</button>
+                              <button 
+                                onClick={() => setEnrollmentPaymentType('cuotas')}
+                                className={`py-4 rounded-2xl font-black uppercase tracking-widest text-xs transition-all ${enrollmentPaymentType === 'cuotas' ? 'bg-slate-900 text-white shadow-lg' : 'bg-slate-50 text-slate-400 border border-slate-100'}`}
+                              >A Cuotas</button>
+                            </div>
+                          </div>
+
+                          <div className="space-y-2">
+                            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">Tipo de Beca</label>
+                            <div className="grid grid-cols-3 gap-4">
+                              <button 
+                                onClick={() => setEnrollmentScholarship('ninguna')}
+                                className={`py-3 rounded-xl font-black uppercase tracking-widest text-[9px] transition-all ${enrollmentScholarship === 'ninguna' ? 'bg-blue-600 text-white shadow-lg' : 'bg-slate-50 text-slate-400 border border-slate-100'}`}
+                              >Ninguna</button>
+                              <button 
+                                onClick={() => setEnrollmentScholarship('media')}
+                                className={`py-3 rounded-xl font-black uppercase tracking-widest text-[9px] transition-all ${enrollmentScholarship === 'media' ? 'bg-blue-600 text-white shadow-lg' : 'bg-slate-50 text-slate-400 border border-slate-100'}`}
+                              >Media Beca</button>
+                              <button 
+                                onClick={() => setEnrollmentScholarship('completa')}
+                                className={`py-3 rounded-xl font-black uppercase tracking-widest text-[9px] transition-all ${enrollmentScholarship === 'completa' ? 'bg-blue-600 text-white shadow-lg' : 'bg-slate-50 text-slate-400 border border-slate-100'}`}
+                              >Beca Completa</button>
+                            </div>
+                          </div>
+
+                          <div className="space-y-2">
+                            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">Fecha de Inicio de Clases</label>
+                            <input 
+                              type="date" 
+                              value={enrollmentClassStartDate}
+                              onChange={(e) => setEnrollmentClassStartDate(e.target.value)}
+                              className="w-full p-4 rounded-2xl bg-slate-50 border-none font-bold text-slate-800 text-sm shadow-inner outline-none focus:ring-2 focus:ring-blue-500"
+                            />
+                          </div>
+
+                          <div className="space-y-2">
+                            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">Método de Pago</label>
+                            <div className="grid grid-cols-3 gap-2">
+                              {['efectivo', 'transferencia', 'billetera'].map((method) => (
+                                <button 
+                                  key={method}
+                                  onClick={() => setEnrollmentPaymentMethod(method as any)}
+                                  className={`py-3 rounded-xl font-black uppercase tracking-widest text-[9px] transition-all ${enrollmentPaymentMethod === method ? 'bg-blue-600 text-white shadow-lg' : 'bg-slate-50 text-slate-400 border border-slate-100'}`}
+                                >
+                                  {method === 'billetera' ? 'Yape/Plin' : method.charAt(0).toUpperCase() + method.slice(1)}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="space-y-6">
+                          <div className="grid grid-cols-2 gap-4">
+                            <div className="space-y-2">
+                              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">Monto Total</label>
+                              <input 
+                                type="number" 
+                                value={enrollmentTotalAmount}
+                                onChange={(e) => setEnrollmentTotalAmount(Number(e.target.value))}
+                                className="w-full p-4 rounded-2xl bg-slate-50 border-none font-bold text-slate-800 text-lg shadow-inner outline-none focus:ring-2 focus:ring-blue-500"
+                              />
+                            </div>
+                            <div className="space-y-2">
+                              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">Monto Materiales</label>
+                              <input 
+                                type="number" 
+                                value={enrollmentMaterialsAmount}
+                                onChange={(e) => setEnrollmentMaterialsAmount(Number(e.target.value))}
+                                className="w-full p-4 rounded-2xl bg-slate-50 border-none font-bold text-slate-800 text-lg shadow-inner outline-none focus:ring-2 focus:ring-blue-500"
+                              />
+                            </div>
+                          </div>
+
+                          {enrollmentPaymentType === 'cuotas' && (
+                            <div className="grid grid-cols-2 gap-4">
+                              <div className="space-y-2">
+                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">Primera Cuota</label>
+                                <input 
+                                  type="number" 
+                                  value={enrollmentFirstInstallment}
+                                  onChange={(e) => setEnrollmentFirstInstallment(Number(e.target.value))}
+                                  className="w-full p-4 rounded-2xl bg-slate-50 border-none font-bold text-slate-800 text-lg shadow-inner outline-none focus:ring-2 focus:ring-blue-500"
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">N° de Cuotas</label>
+                                <input 
+                                  type="number" 
+                                  value={enrollmentInstallmentsCount}
+                                  onChange={(e) => setEnrollmentInstallmentsCount(Number(e.target.value))}
+                                  className="w-full p-4 rounded-2xl bg-slate-50 border-none font-bold text-slate-800 text-lg shadow-inner outline-none focus:ring-2 focus:ring-blue-500"
+                                />
+                              </div>
+                            </div>
+                          )}
+
+                          <div className="bg-slate-900 p-6 rounded-3xl text-white space-y-4">
+                            <div className="flex justify-between items-center">
+                              <span className="text-[10px] font-black uppercase tracking-widest opacity-60">Resumen de Pago</span>
+                              <span className="px-3 py-1 rounded-lg bg-white/10 text-[9px] font-black uppercase tracking-widest">
+                                {enrollmentScholarship === 'completa' ? 'Beca Completa' : enrollmentScholarship === 'media' ? 'Media Beca' : 'Regular'}
+                              </span>
+                            </div>
+                            <div className="flex justify-between items-baseline">
+                              <span className="text-xs font-bold opacity-60">Total a Pagar:</span>
+                              <span className="text-3xl font-black">
+                                S/ {enrollmentScholarship === 'completa' ? enrollmentMaterialsAmount : enrollmentScholarship === 'media' ? (enrollmentTotalAmount / 2) + enrollmentMaterialsAmount : enrollmentTotalAmount + enrollmentMaterialsAmount}
+                              </span>
+                            </div>
+                            {enrollmentPaymentType === 'cuotas' && (
+                              <div className="pt-4 border-t border-white/10 flex justify-between items-center">
+                                <span className="text-[10px] font-black uppercase tracking-widest opacity-60">Pago Inicial:</span>
+                                <span className="text-xl font-black text-blue-400">S/ {enrollmentFirstInstallment}</span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex justify-center pt-8">
+                        <button 
+                          onClick={() => {
+                            if (!enrollmentClassStartDate) {
+                              setToast({ message: "Debe seleccionar una fecha de inicio de clases", type: 'error' });
+                              return;
+                            }
+                            const newEnrollment: Enrollment = {
+                              id: Date.now().toString(),
+                              ownerId: currentUser?.parentId || currentUser?.id || 'admin-1',
+                              studentId: selectedEnrollmentStudent.id,
+                              studentName: `${selectedEnrollmentStudent.nombre} ${selectedEnrollmentStudent.apellido}`,
+                              studentDni: selectedEnrollmentStudent.dni,
+                              paymentType: enrollmentPaymentType,
+                              scholarshipType: enrollmentScholarship,
+                              totalAmount: enrollmentTotalAmount,
+                              firstInstallment: enrollmentPaymentType === 'cuotas' ? enrollmentFirstInstallment : undefined,
+                              materialsAmount: enrollmentMaterialsAmount,
+                              date: new Date().toLocaleDateString(),
+                              receiptNumber: (enrollments.length + 1).toString().padStart(6, '0'),
+                              attendedBy: currentUser?.fullName || currentUser?.username || 'Admin',
+                              status: 'pagado',
+                              installmentsCount: enrollmentPaymentType === 'cuotas' ? enrollmentInstallmentsCount : undefined,
+                              classStartDate: enrollmentClassStartDate,
+                              paymentMethod: enrollmentPaymentMethod
+                            };
+                            setEnrollments([...enrollments, newEnrollment]);
+                            setToast({ message: "Matrícula registrada con éxito", type: 'success' });
+                          }}
+                          className="bg-blue-600 text-white px-12 py-5 rounded-[2rem] font-black uppercase tracking-[0.2em] text-sm hover:bg-blue-700 transition-all shadow-2xl flex items-center gap-4"
+                        >
+                          <FileText size={24} /> GENERAR MATRÍCULA Y BOLETA
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Enrollment History */}
+              <div className="bg-white rounded-[3.5rem] shadow-2xl overflow-hidden border border-slate-200">
+                <div className="p-8 border-b border-slate-100 flex flex-col md:flex-row justify-between items-center gap-4">
+                  <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">Historial de Matrículas</h3>
+                  <div className="flex flex-wrap gap-2">
+                    <div className="relative">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
+                      <input 
+                        type="text" 
+                        placeholder="DNI o Nombre..." 
+                        className="pl-9 pr-4 py-2 rounded-xl bg-slate-50 border-none text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500"
+                        value={enrollmentHistorySearch}
+                        onChange={(e) => setEnrollmentHistorySearch(e.target.value)}
+                      />
+                    </div>
+                    <input 
+                      type="date" 
+                      className="px-4 py-2 rounded-xl bg-slate-50 border-none text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500"
+                      value={enrollmentHistoryDate}
+                      onChange={(e) => setEnrollmentHistoryDate(e.target.value)}
+                    />
+                    <span className="px-4 py-2 rounded-xl bg-slate-50 text-slate-400 font-black text-[10px] uppercase tracking-widest flex items-center">Total: {enrollments.length}</span>
+                  </div>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left">
+                    <thead className="bg-slate-50 border-b border-slate-200">
+                      <tr>
+                        <th className="p-6 font-black text-slate-400 uppercase text-[10px] tracking-widest">N° Boleta</th>
+                        <th className="p-6 font-black text-slate-400 uppercase text-[10px] tracking-widest">Estudiante</th>
+                        <th className="p-6 font-black text-slate-400 uppercase text-[10px] tracking-widest">Tipo</th>
+                        <th className="p-6 font-black text-slate-400 uppercase text-[10px] tracking-widest">Monto</th>
+                        <th className="p-6 font-black text-slate-400 uppercase text-[10px] tracking-widest">Fecha</th>
+                        <th className="p-6 font-black text-slate-400 uppercase text-[10px] tracking-widest">Acciones</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-50">
+                      {enrollments
+                        .filter(e => {
+                          const matchesSearch = e.studentName.toLowerCase().includes(enrollmentHistorySearch.toLowerCase()) || e.studentDni.includes(enrollmentHistorySearch);
+                          const matchesDate = enrollmentHistoryDate ? e.date === new Date(enrollmentHistoryDate + 'T00:00:00').toLocaleDateString() : true;
+                          return matchesSearch && matchesDate;
+                        })
+                        .map(enrollment => (
+                        <tr key={enrollment.id} className="hover:bg-slate-50/50 transition-colors">
+                          <td className="p-6 font-mono font-black text-blue-600">#{enrollment.receiptNumber}</td>
+                          <td className="p-6">
+                            <p className="font-black text-slate-800 uppercase tracking-tighter text-sm">{enrollment.studentName}</p>
+                            <p className="text-[10px] font-bold text-slate-400">DNI: {enrollment.studentDni}</p>
+                          </td>
+                          <td className="p-6">
+                            <span className={`px-3 py-1 rounded-full text-[9px] font-black uppercase border ${enrollment.paymentType === 'contado' ? 'text-emerald-600 border-emerald-100 bg-emerald-50' : 'text-amber-600 border-amber-100 bg-amber-50'}`}>
+                              {enrollment.paymentType}
+                            </span>
+                          </td>
+                          <td className="p-6 font-black text-slate-800">S/ {enrollment.totalAmount}</td>
+                          <td className="p-6 text-xs font-bold text-slate-500">{enrollment.date}</td>
+                          <td className="p-6">
+                            <div className="flex gap-2">
+                              <button 
+                                onClick={() => setViewingEnrollment(enrollment)}
+                                title="Ver Boleta"
+                                className="p-3 text-slate-600 hover:bg-slate-600 hover:text-white rounded-xl transition-all bg-slate-50"
+                              >
+                                <Eye size={16} />
+                              </button>
+                              <button 
+                                onClick={() => setEditingEnrollment(enrollment)}
+                                title="Editar Datos"
+                                className="p-3 text-amber-600 hover:bg-amber-600 hover:text-white rounded-xl transition-all bg-amber-50"
+                              >
+                                <Edit size={16} />
+                              </button>
+                              <button 
+                                onClick={() => generateEnrollmentPDF(enrollment)}
+                                title="Descargar PDF"
+                                className="p-3 text-blue-600 hover:bg-blue-600 hover:text-white rounded-xl transition-all bg-blue-50"
+                              >
+                                <Download size={16} />
+                              </button>
+                              <button 
+                                onClick={() => shareEnrollmentWhatsApp(enrollment)}
+                                title="Compartir WhatsApp"
+                                className="p-3 text-emerald-600 hover:bg-emerald-600 hover:text-white rounded-xl transition-all bg-emerald-50"
+                              >
+                                <Share2 size={16} />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Dashboard Section */}
           {activeTab === 'dashboard' && (
             <div className="animate-slide-up space-y-6">
@@ -2592,9 +3236,30 @@ const App = () => {
                   <Plus size={18} /> NUEVO REGISTRO
                 </button>
               </div>
-              <div className="relative">
-                <Search className="absolute left-5 top-1/2 transform -translate-y-1/2 text-slate-400" size={20} />
-                <input type="text" placeholder="Buscar por DNI, Nombre, Correo..." className="w-full pl-14 pr-6 py-4 rounded-2xl bg-white border border-slate-200 focus:border-blue-500 outline-none text-lg shadow-md transition-all font-bold placeholder:text-slate-300" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+              <div className="space-y-4">
+                <div className="relative">
+                  <Search className="absolute left-5 top-1/2 transform -translate-y-1/2 text-slate-400" size={20} />
+                  <input type="text" placeholder="Buscar por DNI, Nombre, Colegio, Celular Estudiante..." className="w-full pl-14 pr-6 py-4 rounded-2xl bg-white border border-slate-200 focus:border-blue-500 outline-none text-lg shadow-md transition-all font-bold placeholder:text-slate-300" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+                </div>
+                <div className="flex flex-col sm:flex-row gap-4 items-end sm:items-center">
+                  <div className="flex-1 space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2 flex items-center gap-2">
+                      <Calendar size={12} /> Filtrar por Fecha de Registro
+                    </label>
+                    <input 
+                      type="date" 
+                      className="w-full p-3 rounded-xl bg-white border border-slate-200 focus:border-blue-500 outline-none text-sm font-bold shadow-sm transition-all"
+                      value={dateFilter}
+                      onChange={(e) => setDateFilter(e.target.value)}
+                    />
+                  </div>
+                  <button 
+                    onClick={() => { setSearchTerm(""); setDateFilter(""); }}
+                    className="flex items-center gap-2 px-6 py-3 bg-slate-100 text-slate-600 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-200 transition-all shadow-sm"
+                  >
+                    <Eraser size={14} /> Limpiar Filtro
+                  </button>
+                </div>
               </div>
               <div className="flex flex-col sm:flex-row flex-wrap gap-4 items-center justify-between bg-white p-4 rounded-2xl border border-slate-100 shadow-md">
                 <div className="flex flex-wrap gap-2 justify-center sm:justify-start">
@@ -2631,8 +3296,8 @@ const App = () => {
                         <th>Nivel</th>
                         <th>Aula / Grado</th>
                         <th>Celular</th>
-                        <th>Email</th>
-                        <th>Turno</th>
+                        <th>Colegio / Nro</th>
+                        <th>Fecha Reg.</th>
                         <th>Acciones</th>
                       </tr>
                     </thead>
@@ -2669,13 +3334,14 @@ const App = () => {
                               <div className="flex items-center gap-1.5"><Phone size={12} className="text-emerald-500" /> {s.celularApoderado}</div>
                             ) : <span className="text-slate-200 italic font-normal">No registrado</span>}
                           </td>
-                          <td className="text-slate-600 font-medium text-xs">
-                            {s.email ? (
-                              <div className="flex items-center gap-1.5"><Mail size={12} className="text-blue-500" /> {s.email}</div>
-                            ) : <span className="text-slate-200 italic font-normal">No registrado</span>}
+                          <td>
+                            <div className="text-xs">
+                              <p className="font-black text-slate-700 uppercase leading-tight">{s.schoolName || <span className="text-slate-200 italic font-normal">Sin colegio</span>}</p>
+                              <p className="text-[9px] font-bold text-slate-400 uppercase">Cel: {s.studentPhone || '-'}</p>
+                            </div>
                           </td>
                           <td>
-                            <span className="bg-white text-slate-500 px-2 py-0.5 rounded-full text-[9px] font-black uppercase border border-slate-100 shadow-sm">{s.turno}</span>
+                            <span className="bg-white text-slate-500 px-2 py-0.5 rounded-full text-[9px] font-black uppercase border border-slate-100 shadow-sm">{s.registrationDate || '-'}</span>
                           </td>
                           <td>
                             <div className="flex gap-1.5">
@@ -2833,18 +3499,22 @@ const App = () => {
                   <p className="text-slate-500 font-medium text-sm md:text-base">Gestión de Incidencias y Reportes de Conducta.</p>
                 </div>
                 <div className="flex flex-row bg-white p-1.5 md:p-2 rounded-2xl shadow-xl border border-slate-100 w-full md:w-auto overflow-x-auto no-scrollbar">
-                  <button 
-                    onClick={() => setActiveAlertaSubTab('registro')}
-                    className={`flex-1 md:flex-none px-4 md:px-6 py-2.5 md:py-3 rounded-xl font-black uppercase tracking-widest text-[9px] md:text-[10px] transition-all whitespace-nowrap ${activeAlertaSubTab === 'registro' ? 'bg-red-600 text-white shadow-lg' : 'bg-white text-slate-400 border border-slate-200 hover:border-red-200'}`}
-                  >
-                    Registrar Incidencia
-                  </button>
-                  <button 
-                    onClick={() => setActiveAlertaSubTab('historial')}
-                    className={`flex-1 md:flex-none px-4 md:px-6 py-2.5 md:py-3 rounded-xl font-black uppercase tracking-widest text-[9px] md:text-[10px] transition-all whitespace-nowrap ${activeAlertaSubTab === 'historial' ? 'bg-red-600 text-white shadow-lg' : 'bg-white text-slate-400 border border-slate-200 hover:border-red-200'}`}
-                  >
-                    Historial
-                  </button>
+                  {(currentUser?.role === 'admin' || currentUser?.permissions.includes('alerta:registro')) && (
+                    <button 
+                      onClick={() => setActiveAlertaSubTab('registro')}
+                      className={`flex-1 md:flex-none px-4 md:px-6 py-2.5 md:py-3 rounded-xl font-black uppercase tracking-widest text-[9px] md:text-[10px] transition-all whitespace-nowrap ${activeAlertaSubTab === 'registro' ? 'bg-red-600 text-white shadow-lg' : 'bg-white text-slate-400 border border-slate-200 hover:border-red-200'}`}
+                    >
+                      Registrar Incidencia
+                    </button>
+                  )}
+                  {(currentUser?.role === 'admin' || currentUser?.permissions.includes('alerta:historial')) && (
+                    <button 
+                      onClick={() => setActiveAlertaSubTab('historial')}
+                      className={`flex-1 md:flex-none px-4 md:px-6 py-2.5 md:py-3 rounded-xl font-black uppercase tracking-widest text-[9px] md:text-[10px] transition-all whitespace-nowrap ${activeAlertaSubTab === 'historial' ? 'bg-red-600 text-white shadow-lg' : 'bg-white text-slate-400 border border-slate-200 hover:border-red-200'}`}
+                    >
+                      Historial
+                    </button>
+                  )}
                 </div>
               </header>
 
@@ -2953,6 +3623,7 @@ const App = () => {
                         const formData = new FormData(e.currentTarget);
                         const newIncidence: Incidence = {
                           id: Date.now().toString(),
+                          ownerId: currentUser?.parentId || currentUser?.id || 'admin-1',
                           studentId: selectedPersonalStudent.id,
                           studentName: `${selectedPersonalStudent.nombre} ${selectedPersonalStudent.apellido}`,
                           studentDni: selectedPersonalStudent.dni,
@@ -3111,7 +3782,7 @@ const App = () => {
                                         const message = `ALERTA INSTITUCIONAL: Se ha registrado una incidencia de tipo "${inc.type}" para el alumno ${inc.studentName}. Gravedad: ${inc.severity.toUpperCase()}. Descripción: ${inc.description}`;
                                         window.open(`https://wa.me/${student.celularApoderado.replace(/\D/g, '')}?text=${encodeURIComponent(message)}`, '_blank');
                                       } else {
-                                        alert("No se encontró número de WhatsApp registrado para el apoderado.");
+                                        setToast({ message: "No se encontró número de WhatsApp registrado para el apoderado.", type: 'error' });
                                       }
                                     }}
                                     className="p-2 bg-emerald-50 text-emerald-600 rounded-xl hover:bg-emerald-600 hover:text-white transition-all"
@@ -3145,24 +3816,32 @@ const App = () => {
             <div className="animate-slide-up space-y-6">
                <h2 className="text-2xl md:text-4xl font-black text-slate-800 tracking-tighter text-center italic uppercase">{activeConfig.siteName}</h2>
                
-               <div className="flex justify-center mb-6">
-                 <div className="flex bg-white p-1 rounded-2xl shadow-xl border border-slate-100">
-                   <button 
-                     onClick={() => setActiveCalificacionesSubTab('lista')}
-                     className={`px-6 py-3 rounded-xl font-black text-xs uppercase tracking-widest transition-all ${activeCalificacionesSubTab === 'lista' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-slate-600'}`}
-                   >Lista</button>
-                   <button 
-                     onClick={() => setActiveCalificacionesSubTab('registros')}
-                     className={`px-6 py-3 rounded-xl font-black text-xs uppercase tracking-widest transition-all ${activeCalificacionesSubTab === 'registros' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-slate-600'}`}
-                   >Registros</button>
-                   <button 
-                     onClick={() => setActiveCalificacionesSubTab('boletas')}
-                     className={`px-6 py-3 rounded-xl font-black text-xs uppercase tracking-widest transition-all ${activeCalificacionesSubTab === 'boletas' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-slate-600'}`}
-                   >Boletas</button>
-                   <button 
-                     onClick={() => setActiveCalificacionesSubTab('calificar')}
-                     className={`px-6 py-3 rounded-xl font-black text-xs uppercase tracking-widest transition-all ${activeCalificacionesSubTab === 'calificar' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-slate-600'}`}
-                   >Calificar</button>
+               <div className="flex justify-center mb-6 px-2">
+                 <div className="grid grid-cols-2 sm:flex bg-white p-1 rounded-2xl shadow-xl border border-slate-100 w-full sm:w-auto">
+                    {(currentUser?.role === 'admin' || currentUser?.permissions.includes('calificaciones:lista')) && (
+                      <button 
+                        onClick={() => setActiveCalificacionesSubTab('lista')}
+                        className={`px-3 sm:px-6 py-3 rounded-xl font-black text-[10px] sm:text-xs uppercase tracking-widest transition-all ${activeCalificacionesSubTab === 'lista' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-slate-600'}`}
+                      >Lista</button>
+                    )}
+                    {(currentUser?.role === 'admin' || currentUser?.permissions.includes('calificaciones:registros')) && (
+                      <button 
+                        onClick={() => setActiveCalificacionesSubTab('registros')}
+                        className={`px-3 sm:px-6 py-3 rounded-xl font-black text-[10px] sm:text-xs uppercase tracking-widest transition-all ${activeCalificacionesSubTab === 'registros' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-slate-600'}`}
+                      >Registros</button>
+                    )}
+                    {(currentUser?.role === 'admin' || currentUser?.permissions.includes('calificaciones:boletas')) && (
+                      <button 
+                        onClick={() => setActiveCalificacionesSubTab('boletas')}
+                        className={`px-3 sm:px-6 py-3 rounded-xl font-black text-[10px] sm:text-xs uppercase tracking-widest transition-all ${activeCalificacionesSubTab === 'boletas' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-slate-600'}`}
+                      >Boletas</button>
+                    )}
+                    {(currentUser?.role === 'admin' || currentUser?.permissions.includes('calificaciones:calificar')) && (
+                      <button 
+                        onClick={() => setActiveCalificacionesSubTab('calificar')}
+                        className={`px-3 sm:px-6 py-3 rounded-xl font-black text-[10px] sm:text-xs uppercase tracking-widest transition-all ${activeCalificacionesSubTab === 'calificar' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-slate-600'}`}
+                      >Calificar</button>
+                    )}
                  </div>
                </div>
 
@@ -3242,7 +3921,7 @@ const App = () => {
                   <div className="max-h-64 overflow-y-auto no-scrollbar border-2 border-slate-50 rounded-[2rem] p-3 space-y-2 bg-slate-50/50 shadow-inner">
                     {students
                       .filter(s => {
-                        const matchesSearch = (s.nombre + " " + s.apellido + " " + s.dni).toLowerCase().includes(calificacionesSearch.toLowerCase());
+                        const matchesSearch = (s.nombre + " " + s.apellido + " " + s.dni + " " + s.grado + " " + s.seccion + " " + s.nivel).toLowerCase().includes(calificacionesSearch.toLowerCase());
                         const matchesLevel = !calificacionesLevelFilter || s.nivel === calificacionesLevelFilter;
                         const matchesGrade = !calificacionesGradeFilter || s.grado === calificacionesGradeFilter;
                         const matchesSection = !calificacionesSectionFilter || s.seccion === calificacionesSectionFilter;
@@ -3344,36 +4023,71 @@ const App = () => {
                <div className="space-y-8">
                  {/* Student Search */}
                  <div className="space-y-4">
-                   <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">Buscar Alumno por DNI</label>
-                   <div className="flex gap-3">
-                     <div className="relative flex-1">
-                       <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-                       <input 
-                         type="text" 
-                         placeholder="Ingrese DNI..." 
-                         value={calificarSearchDni}
-                         onChange={(e) => {
-                           setCalificarSearchDni(e.target.value);
-                           if (e.target.value.length === 8) {
-                             const student = students.find(s => s.dni === e.target.value);
-                             if (student) setSelectedCalificarStudent(student);
-                           }
-                         }}
-                         className="w-full pl-12 p-4 rounded-2xl bg-slate-50 border-none font-bold text-slate-800 text-lg shadow-inner outline-none focus:ring-2 focus:ring-blue-500"
-                       />
-                     </div>
-                     <button 
-                       onClick={() => {
-                         const student = students.find(s => s.dni === calificarSearchDni);
-                         if (student) setSelectedCalificarStudent(student);
-                         else setToast({ message: "No se encontró el alumno", type: 'error' });
-                       }}
-                       className="bg-slate-900 text-white px-8 py-4 rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-slate-800 transition-all shadow-lg"
-                     >
-                       Buscar
-                     </button>
-                   </div>
-                 </div>
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">Buscar Alumno (Nombre o DNI)</label>
+                    <div className="relative">
+                      <div className="relative flex gap-3">
+                        <div className="relative flex-1">
+                          <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                          <input 
+                            type="text" 
+                            placeholder="Ingrese Nombre o DNI..." 
+                            value={calificarSearchDni}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setCalificarSearchDni(val);
+                              if (val.length >= 3) {
+                                const filtered = students.filter(s => 
+                                  s.dni.includes(val) || 
+                                  `${s.nombre} ${s.apellido}`.toLowerCase().includes(val.toLowerCase()) ||
+                                  s.grado.toLowerCase().includes(val.toLowerCase()) ||
+                                  s.seccion.toLowerCase().includes(val.toLowerCase())
+                                );
+                                setCalificarSearchResults(filtered);
+                              } else {
+                                setCalificarSearchResults([]);
+                              }
+                            }}
+                            className="w-full pl-12 p-4 rounded-2xl bg-slate-50 border-none font-bold text-slate-800 text-lg shadow-inner outline-none focus:ring-2 focus:ring-blue-500"
+                          />
+                        </div>
+                        <button 
+                          onClick={() => {
+                            const student = students.find(s => s.dni === calificarSearchDni);
+                            if (student) setSelectedCalificarStudent(student);
+                            else if (calificarSearchResults.length === 1) setSelectedCalificarStudent(calificarSearchResults[0]);
+                            else setToast({ message: "Por favor seleccione un alumno de la lista", type: 'error' });
+                          }}
+                          className="bg-slate-900 text-white px-8 py-4 rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-slate-800 transition-all shadow-lg"
+                        >
+                          Buscar
+                        </button>
+                      </div>
+
+                      {calificarSearchResults.length > 0 && !selectedCalificarStudent && (
+                        <div className="absolute z-50 left-0 right-0 mt-2 bg-white rounded-2xl shadow-2xl border border-slate-100 overflow-hidden max-h-60 overflow-y-auto">
+                          {calificarSearchResults.map(student => (
+                            <button
+                              key={student.id}
+                              onClick={() => {
+                                setSelectedCalificarStudent(student);
+                                setCalificarSearchDni(student.dni);
+                                setCalificarSearchResults([]);
+                              }}
+                              className="w-full flex items-center gap-4 p-4 hover:bg-slate-50 transition-all border-b border-slate-50 last:border-none text-left"
+                            >
+                              <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center font-black text-xs overflow-hidden">
+                                {student.foto ? <img src={student.foto} className="w-full h-full object-cover" /> : student.nombre[0]}
+                              </div>
+                              <div>
+                                <p className="font-black text-slate-800 uppercase text-xs">{student.nombre} {student.apellido}</p>
+                                <p className="text-[9px] font-bold text-slate-400 uppercase">DNI: {student.dni} | {student.grado} "{student.seccion}"</p>
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
 
                  {selectedCalificarStudent && (
                    <div className="animate-fade-in space-y-8">
@@ -3400,7 +4114,7 @@ const App = () => {
                      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                        <div className="space-y-6">
                          <div className="space-y-2">
-                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+                           <div className="hidden">
                              <div className="space-y-2">
                                <select 
                                  className="w-full p-4 rounded-2xl bg-slate-50 border-none font-bold text-slate-800 text-sm shadow-inner outline-none focus:ring-2 focus:ring-blue-500"
@@ -3412,17 +4126,17 @@ const App = () => {
                                </select>
                              </div>
                              <div className="space-y-2">
-                               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">Periodo / Bimestre</label>
+                               
                                <select 
-                                 value={selectedCalificarPeriodo}
-                                 onChange={(e) => setSelectedCalificarPeriodo(e.target.value)}
+                                 value=""
+                                 onChange={(e) => {}}
                                  className="w-full p-4 rounded-2xl bg-slate-50 border-none font-bold text-slate-800 text-sm shadow-inner outline-none focus:ring-2 focus:ring-blue-500"
                                >
-                                 <option value="">Seleccione Periodo...</option>
-                                 <option value="1er Bimestre">1er Bimestre</option>
-                                 <option value="2do Bimestre">2do Bimestre</option>
-                                 <option value="3er Bimestre">3er Bimestre</option>
-                                 <option value="4to Bimestre">4to Bimestre</option>
+                                 
+                                 
+                                 
+                                 
+                                 
                                </select>
                              </div>
                            </div>
@@ -3494,17 +4208,18 @@ const App = () => {
                          
                          <button 
                            onClick={() => {
-                             if (!selectedExamType || !selectedCalificarPeriodo) {
+                             if (!selectedExamType) {
                                setToast({ message: "Complete todos los campos (Periodo y Tipo)", type: 'error' });
                                return;
                              }
-                             const newGrade: Grade = {
-                               id: Date.now().toString(),
+                              const newGrade: Grade = {
+                                id: Date.now().toString(),
+                                ownerId: currentUser?.parentId || currentUser?.id || 'admin-1',
                                studentId: selectedCalificarStudent.id,
                                studentName: `${selectedCalificarStudent.nombre} ${selectedCalificarStudent.apellido}`,
-                               materia: "",
+                               materia: "Examen",
                                examType: selectedExamType,
-                               periodo: selectedCalificarPeriodo,
+                               periodo: "General",
                                nota: calculatedScore.finalGrade,
                                fecha: new Date().toLocaleDateString(),
                                buenas,
@@ -3516,7 +4231,8 @@ const App = () => {
                                pointsPerBlank: examTypes.find(t => t.name === selectedExamType)?.pointsPerBlank,
                                numQuestions: examTypes.find(t => t.name === selectedExamType)?.numQuestions,
                                isIndispensable: examTypes.find(t => t.name === selectedExamType)?.isIndispensable,
-                               divisor: examTypes.find(t => t.name === selectedExamType)?.divisor || 1
+                               divisor: examTypes.find(t => t.name === selectedExamType)?.divisor || 1,
+                               rawScore: calculatedScore.rawScore
                              };
                              setGrades(prev => [...prev, newGrade]);
                              setToast({ message: "Calificación registrada con éxito", type: 'success' });
@@ -3526,7 +4242,7 @@ const App = () => {
                              setBlancas(0);
                              setSelectedExamType("");
                              
-                             setSelectedCalificarPeriodo("");
+                                                           
                            }}
                            className="mt-10 w-full bg-blue-600 hover:bg-blue-700 text-white py-4 rounded-2xl font-black uppercase tracking-widest text-sm transition-all shadow-xl flex items-center justify-center gap-3"
                          >
@@ -3557,6 +4273,10 @@ const App = () => {
                    }
                    
                    return matchesSearch && matchesGrade && matchesMateria && matchesDate;
+                 }).sort((a, b) => {
+                   if (registrosSortOrder === 'merito') return b.nota - a.nota;
+                   if (registrosSortOrder === 'demerito') return a.nota - b.nota;
+                   return 0;
                  });
 
                  return (
@@ -3603,7 +4323,7 @@ const App = () => {
                      </div>
 
                      {/* Filters Grid */}
-                     <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8 bg-slate-50 p-6 rounded-3xl border border-slate-100">
+                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-8 bg-slate-50 p-6 rounded-3xl border border-slate-100">
                        <div className="space-y-2">
                          <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">Buscar Alumno</label>
                          <div className="relative">
@@ -3646,19 +4366,34 @@ const App = () => {
                              type="date" 
                              value={calificacionesDateFilter}
                              onChange={(e) => setCalificacionesDateFilter(e.target.value)}
-                             className="flex-1 px-4 py-2 rounded-xl bg-white border-none font-bold text-slate-800 text-xs shadow-sm outline-none focus:ring-2 focus:ring-blue-500"
-                           />
+                              className="flex-1 px-4 py-2 rounded-xl bg-white border-none font-bold text-slate-800 text-xs shadow-sm outline-none focus:ring-2 focus:ring-blue-500"
+                            />
+                          </div>
+                        </div>
+                        <div className="space-y-2">
+                         <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">Orden de Mérito</label>
+                         <div className="flex gap-2">
+                           <select 
+                             value={registrosSortOrder}
+                             onChange={(e) => setRegistrosSortOrder(e.target.value as any)}
+                             className="flex-1 px-3 py-2 rounded-xl bg-white border-none font-bold text-slate-800 text-[10px] shadow-sm outline-none focus:ring-2 focus:ring-blue-500"
+                           >
+                             <option value="ninguno">Ninguno</option>
+                             <option value="merito">Mérito</option>
+                             <option value="demerito">Demérito</option>
+                           </select>
                            <button 
                              onClick={() => {
                                setCalificacionesSearch("");
                                setCalificacionesGradeFilter("");
                                setCalificacionesMateriaFilter("");
                                setCalificacionesDateFilter("");
+                               setRegistrosSortOrder("ninguno");
                              }}
-                             className="p-2 bg-white text-slate-400 hover:text-blue-600 rounded-xl shadow-sm transition-all"
+                             className="p-2 bg-white text-slate-400 hover:text-blue-600 rounded-xl shadow-sm transition-all shrink-0"
                              title="Limpiar Filtros"
                            >
-                             <RefreshCw size={16} />
+                             <RefreshCw size={14} />
                            </button>
                          </div>
                        </div>
@@ -3668,19 +4403,28 @@ const App = () => {
                        <table className="w-full text-left border-separate border-spacing-y-3">
                          <thead>
                            <tr className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                             {registrosSortOrder !== 'ninguno' && <th className="px-6 py-4">Puesto</th>}
                              <th className="px-6 py-4">Alumno</th>
                              <th className="px-6 py-4">Materia / Tipo</th>
+                             <th className="px-6 py-4 text-center">Puntos</th>
                              <th className="px-6 py-4 text-center">Nota</th>
                              <th className="px-6 py-4">Fecha</th>
                              <th className="px-6 py-4 text-right">Acciones</th>
                            </tr>
                          </thead>
                          <tbody>
-                           {filteredGrades.map(grade => {
+                           {filteredGrades.map((grade, index) => {
                              const student = students.find(s => s.id === grade.studentId);
                              return (
                                <tr key={grade.id} className="bg-white hover:bg-slate-50 transition-all group shadow-sm rounded-2xl">
-                                 <td className="px-6 py-4 rounded-l-2xl border-y border-l border-slate-100">
+                                 {registrosSortOrder !== 'ninguno' && (
+                                   <td className="px-6 py-4 rounded-l-2xl border-y border-l border-slate-100">
+                                     <span className={`w-8 h-8 rounded-full flex items-center justify-center font-black text-xs ${index < 3 && registrosSortOrder === 'merito' ? 'bg-amber-100 text-amber-600' : 'bg-slate-100 text-slate-500'}`}>
+                                       {index + 1}
+                                     </span>
+                                   </td>
+                                 )}
+                                 <td className={`px-6 py-4 ${registrosSortOrder === 'ninguno' ? 'rounded-l-2xl border-l' : ''} border-y border-slate-100`}>
                                    <div className="flex items-center gap-3">
                                      <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center font-black text-xs overflow-hidden">
                                        {student?.foto ? <img src={student.foto} className="w-full h-full object-cover" /> : grade.studentName[0]}
@@ -3693,6 +4437,11 @@ const App = () => {
                                  </td>
                                  <td className="px-6 py-4 border-y border-slate-100">
                                    <p className="font-bold text-slate-600 text-xs">{grade.materia}</p>
+                                  </td>
+                                  <td className="px-6 py-4 border-y border-slate-100 text-center">
+                                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                                      {grade.rawScore?.toFixed(1) || '-'}
+                                    </span>
                                  </td>
                                  <td className="px-6 py-4 border-y border-slate-100 text-center">
                                    <span className={`inline-block px-3 py-1 rounded-lg font-black text-sm ${grade.nota >= 11 ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
@@ -3708,12 +4457,24 @@ const App = () => {
                                        onClick={() => {
                                          const message = `Hola ${grade.studentName}, se ha registrado tu nota en ${grade.materia}: *${grade.nota}*. Fecha: ${grade.fecha}.`;
                                          const phone = student?.celularApoderado || "";
-                                         window.open(`https://wa.me/${phone}?text=${encodeURIComponent(message)}`, '_blank');
+                                         const waLink = `https://wa.me/${phone.replace(/\s+/g, '')}?text=${encodeURIComponent(`Estimado Apoderado, se le comunica que se ha registrado una nota para el alumno ${grade.studentName} en la materia ${grade.materia}. Nota: *${grade.nota}*. Fecha: ${grade.fecha}.`)}`;
+                                         window.open(waLink, '_blank');
                                        }}
                                        className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-all"
-                                       title="Enviar por WhatsApp"
+                                       title="Enviar al Apoderado"
                                      >
                                        <Phone size={16} />
+                                     </button>
+                                     <button 
+                                       onClick={() => {
+                                         const phone = student?.studentPhone || "";
+                                         const waLink = `https://wa.me/${phone.replace(/\s+/g, '')}?text=${encodeURIComponent(`Hola ${grade.studentName}, se ha registrado tu nota en ${grade.materia}: *${grade.nota}*. Fecha: ${grade.fecha}.`)}`;
+                                         window.open(waLink, '_blank');
+                                       }}
+                                       className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
+                                       title="Enviar al Alumno"
+                                     >
+                                       <Users size={16} />
                                      </button>
                                      <button 
                                        onClick={() => setEditingGrade(grade)}
@@ -3769,7 +4530,7 @@ const App = () => {
                          </div>
                        </div>
 
-                       <div className="grid grid-cols-1 md:grid-cols-12 gap-4 mb-8">
+                       <div className="grid grid-cols-1 md:grid-cols-10 gap-4 mb-8">
                          <div className="md:col-span-4 space-y-2">
                            <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-4">Búsqueda</label>
                            <div className="relative">
@@ -3819,25 +4580,12 @@ const App = () => {
                              {Array.from(new Set(gradeLevels.map(gl => gl.seccion))).map(s => <option key={s} value={s}>{s}</option>)}
                            </select>
                          </div>
-
-                         <div className="md:col-span-2 space-y-2">
-                           <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-4">Orden</label>
-                           <select 
-                             value={boletasSortOrder}
-                             onChange={(e) => setBoletasSortOrder(e.target.value as any)}
-                             className="w-full p-3 rounded-xl bg-slate-50 border-none font-bold text-slate-800 text-sm shadow-inner outline-none"
-                           >
-                             <option value="merito">Mérito (Mayor)</option>
-                             <option value="demerito">Demérito (Menor)</option>
-                           </select>
-                         </div>
                        </div>
 
                        <div className="overflow-x-auto no-scrollbar">
                          <table className="w-full text-left border-separate border-spacing-y-3">
                            <thead>
                              <tr className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                               <th className="px-6 py-4">Puesto</th>
                                <th className="px-6 py-4">Alumno</th>
                                <th className="px-6 py-4">Grado / Sección</th>
                                <th className="px-6 py-4 text-center">Promedio</th>
@@ -3861,15 +4609,9 @@ const App = () => {
                                    : 0;
                                  return { ...s, average };
                                })
-                               .sort((a, b) => boletasSortOrder === 'merito' ? b.average - a.average : a.average - b.average)
                                .map((s, index) => (
                                  <tr key={s.id} className="bg-white hover:bg-slate-50 transition-all group shadow-sm rounded-2xl">
                                    <td className="px-6 py-4 rounded-l-2xl border-y border-l border-slate-100">
-                                     <span className={`w-8 h-8 rounded-full flex items-center justify-center font-black text-xs ${index < 3 && boletasSortOrder === 'merito' ? 'bg-amber-100 text-amber-600' : 'bg-slate-100 text-slate-500'}`}>
-                                       {index + 1}
-                                     </span>
-                                   </td>
-                                   <td className="px-6 py-4 border-y border-slate-100">
                                      <div className="flex items-center gap-3">
                                        <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center font-black text-xs overflow-hidden">
                                          {s.foto ? <img src={s.foto} className="w-full h-full object-cover" /> : s.nombre[0]}
@@ -4174,7 +4916,7 @@ const App = () => {
                             onClick={() => {
                               const current = globalConfig.publicModules || { attendance: true, alerts: true, schedule: true, grades: true };
                               const newModules = { ...current, attendance: !current.attendance };
-                              setGlobalConfig({ ...globalConfig, publicModules: newModules });
+                              setGlobalConfig(prev => ({ ...prev, publicModules: newModules }));
                               setToast({ message: `Módulo Asistencia ${!current.attendance ? 'habilitado' : 'deshabilitado'}`, type: 'success' });
                             }}
                             className={`p-8 rounded-[2.5rem] border-2 transition-all flex flex-col items-center gap-4 group ${(globalConfig.publicModules?.attendance ?? true) ? 'bg-emerald-50 border-emerald-200' : 'bg-slate-50 border-slate-100 opacity-60'}`}
@@ -4192,7 +4934,7 @@ const App = () => {
                             onClick={() => {
                               const current = globalConfig.publicModules || { attendance: true, alerts: true, schedule: true, grades: true };
                               const newModules = { ...current, alerts: !current.alerts };
-                              setGlobalConfig({ ...globalConfig, publicModules: newModules });
+                              setGlobalConfig(prev => ({ ...prev, publicModules: newModules }));
                               setToast({ message: `Módulo Alertas ${!current.alerts ? 'habilitado' : 'deshabilitado'}`, type: 'success' });
                             }}
                             className={`p-8 rounded-[2.5rem] border-2 transition-all flex flex-col items-center gap-4 group ${(globalConfig.publicModules?.alerts ?? true) ? 'bg-rose-50 border-rose-200' : 'bg-slate-50 border-slate-100 opacity-60'}`}
@@ -4210,7 +4952,7 @@ const App = () => {
                             onClick={() => {
                               const current = globalConfig.publicModules || { attendance: true, alerts: true, schedule: true, grades: true };
                               const newModules = { ...current, schedule: !current.schedule };
-                              setGlobalConfig({ ...globalConfig, publicModules: newModules });
+                              setGlobalConfig(prev => ({ ...prev, publicModules: newModules }));
                               setToast({ message: `Módulo Horario ${!current.schedule ? 'habilitado' : 'deshabilitado'}`, type: 'success' });
                             }}
                             className={`p-8 rounded-[2.5rem] border-2 transition-all flex flex-col items-center gap-4 group ${(globalConfig.publicModules?.schedule ?? true) ? 'bg-blue-50 border-blue-200' : 'bg-slate-50 border-slate-100 opacity-60'}`}
@@ -4228,7 +4970,7 @@ const App = () => {
                             onClick={() => {
                               const current = globalConfig.publicModules || { attendance: true, alerts: true, schedule: true, grades: true, hideTeacherSchedule: false };
                               const newModules = { ...current, hideTeacherSchedule: !current.hideTeacherSchedule };
-                              setGlobalConfig({ ...globalConfig, publicModules: newModules });
+                              setGlobalConfig(prev => ({ ...prev, publicModules: newModules }));
                               setToast({ message: `Horario de Docentes ${newModules.hideTeacherSchedule ? 'oculto' : 'visible'} para el público`, type: 'success' });
                             }}
                             className={`p-8 rounded-[2.5rem] border-2 flex flex-col items-center gap-4 group ${(globalConfig.publicModules?.hideTeacherSchedule) ? 'bg-slate-50 border-slate-100 opacity-60' : 'bg-amber-50 border-amber-200'}`}
@@ -4246,7 +4988,7 @@ const App = () => {
                             onClick={() => {
                               const current = globalConfig.publicModules || { attendance: true, alerts: true, schedule: true, grades: true };
                               const newModules = { ...current, grades: !current.grades };
-                              setGlobalConfig({ ...globalConfig, publicModules: newModules });
+                              setGlobalConfig(prev => ({ ...prev, publicModules: newModules }));
                               setToast({ message: `Módulo Notas ${!current.grades ? 'habilitado' : 'deshabilitado'}`, type: 'success' });
                             }}
                             className={`p-8 rounded-[2.5rem] border-2 transition-all flex flex-col items-center gap-4 group ${(globalConfig.publicModules?.grades ?? true) ? 'bg-amber-50 border-amber-200' : 'bg-slate-50 border-slate-100 opacity-60'}`}
@@ -4377,22 +5119,24 @@ const App = () => {
                   <div className="flex flex-col md:flex-row justify-between items-center gap-4 md:gap-6">
                     <h3 className="text-xl md:text-2xl font-black text-slate-800 uppercase tracking-tighter text-center md:text-left">Gestión de Niveles y Grados</h3>
                     <div className="flex bg-slate-100 p-1 rounded-xl w-full md:w-auto justify-center">
-                      <button 
-                        onClick={() => setActiveGradosSubTab('niveles')}
-                        className={`flex-1 md:flex-none px-4 md:px-6 py-2.5 md:py-3 rounded-lg font-black text-[9px] md:text-[10px] uppercase tracking-widest transition-all ${activeGradosSubTab === 'niveles' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400'}`}
-                      >Niveles</button>
-                      <button 
-                        onClick={() => setActiveGradosSubTab('grados')}
-                        className={`flex-1 md:flex-none px-4 md:px-6 py-2.5 md:py-3 rounded-lg font-black text-[9px] md:text-[10px] uppercase tracking-widest transition-all ${activeGradosSubTab === 'grados' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400'}`}
-                      >Grados</button>
-                      <button 
-                        onClick={() => setActiveGradosSubTab('secciones')}
-                        className={`flex-1 md:flex-none px-4 md:px-6 py-2.5 md:py-3 rounded-lg font-black text-[9px] md:text-[10px] uppercase tracking-widest transition-all ${activeGradosSubTab === 'secciones' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400'}`}
-                      >Secciones</button>
-                      <button 
-                        onClick={() => setActiveGradosSubTab('periodos')}
-                        className={`flex-1 md:flex-none px-4 md:px-6 py-2.5 md:py-3 rounded-lg font-black text-[9px] md:text-[10px] uppercase tracking-widest transition-all ${activeGradosSubTab === 'periodos' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400'}`}
-                      >Periodos</button>
+                      {(currentUser?.role === 'admin' || currentUser?.permissions.includes('mi-panel:grados:niveles')) && (
+                        <button 
+                          onClick={() => setActiveGradosSubTab('niveles')}
+                          className={`flex-1 md:flex-none px-4 md:px-6 py-2.5 md:py-3 rounded-lg font-black text-[9px] md:text-[10px] uppercase tracking-widest transition-all ${activeGradosSubTab === 'niveles' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400'}`}
+                        >Niveles</button>
+                      )}
+                      {(currentUser?.role === 'admin' || currentUser?.permissions.includes('mi-panel:grados:grados')) && (
+                        <button 
+                          onClick={() => setActiveGradosSubTab('grados')}
+                          className={`flex-1 md:flex-none px-4 md:px-6 py-2.5 md:py-3 rounded-lg font-black text-[9px] md:text-[10px] uppercase tracking-widest transition-all ${activeGradosSubTab === 'grados' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400'}`}
+                        >Grados</button>
+                      )}
+                      {(currentUser?.role === 'admin' || currentUser?.permissions.includes('mi-panel:grados:secciones')) && (
+                        <button 
+                          onClick={() => setActiveGradosSubTab('secciones')}
+                          className={`flex-1 md:flex-none px-4 md:px-6 py-2.5 md:py-3 rounded-lg font-black text-[9px] md:text-[10px] uppercase tracking-widest transition-all ${activeGradosSubTab === 'secciones' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400'}`}
+                        >Secciones</button>
+                      )}
                     </div>
                   </div>
 
@@ -4509,67 +5253,6 @@ const App = () => {
                                       }
                                       setSections(sections.filter(sec => sec !== s));
                                       setToast({ message: "Sección eliminada", type: 'success' });
-                                      setConfirmModal(null);
-                                    }
-                                  });
-                                }}
-                                className="p-2 text-rose-500 hover:bg-rose-50 rounded-lg"
-                              ><Trash2 size={14} /></button>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {activeGradosSubTab === 'periodos' && (
-                    <div className="space-y-6 animate-slide-up">
-                      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
-                        <div>
-                          <h3 className="text-lg font-black text-slate-900 uppercase tracking-tight">Gestión de Periodos / Bimestres</h3>
-                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">Administra los periodos académicos disponibles</p>
-                        </div>
-                        <button 
-                          onClick={() => {
-                            setEditingPeriod(null);
-                            setPanelModalType('period');
-                          }}
-                          className="w-full md:w-auto flex items-center justify-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-xl font-black text-[10px] uppercase tracking-widest hover:scale-105 transition-all shadow-lg"
-                          style={{ backgroundColor: activeConfig.theme.primaryColor }}
-                        ><Plus size={16} /> Nuevo Periodo</button>
-                      </div>
-
-                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                        {(globalConfig.periods || []).map((p) => (
-                          <div key={p.id} className="bg-slate-50 p-6 rounded-2xl border border-slate-100 flex items-center justify-between group hover:border-blue-200 transition-all">
-                            <div className="flex items-center gap-4">
-                              <div className="w-12 h-12 rounded-xl bg-white shadow-sm flex items-center justify-center font-black text-blue-600 text-lg" style={{ color: activeConfig.theme.primaryColor }}>
-                                <Calendar size={20} />
-                              </div>
-                              <div>
-                                <p className="text-sm font-black text-slate-900 uppercase">{p.name}</p>
-                                <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Periodo Académico</p>
-                              </div>
-                            </div>
-                            <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                              <button 
-                                onClick={() => {
-                                  setEditingPeriod(p);
-                                  setPanelModalType('period');
-                                }}
-                                className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg"
-                              ><Edit size={14} /></button>
-                              <button 
-                                onClick={() => {
-                                  setConfirmModal({
-                                    title: "Eliminar Periodo",
-                                    message: `¿Estás seguro de eliminar el periodo "${p.name}"?`,
-                                    onConfirm: () => {
-                                      setGlobalConfig({
-                                        ...globalConfig,
-                                        periods: (globalConfig.periods || []).filter(per => per.id !== p.id)
-                                      });
-                                      setToast({ message: "Periodo eliminado", type: 'success' });
                                       setConfirmModal(null);
                                     }
                                   });
@@ -5116,27 +5799,35 @@ const App = () => {
               )}
               {activePanelSubTab === 'horarios' && (
                 <div className="space-y-8">
-                  {currentUser?.permissions.includes('horarios') ? (
+                  {(currentUser?.permissions.includes('horarios') || currentUser?.permissions.includes('mi-panel:horarios')) ? (
                     <>
                       <div className="flex flex-col md:flex-row justify-between items-center gap-4">
                         <h3 className="text-2xl font-black text-slate-800 uppercase tracking-tighter text-center md:text-left">Gestión de Horarios</h3>
                         <div className="flex bg-slate-100 p-1 rounded-xl overflow-x-auto no-scrollbar w-full md:w-auto">
-                          <button 
-                            onClick={() => setActiveHorariosSubTab('turnos')}
-                            className={`flex-1 md:flex-none px-4 py-2.5 rounded-lg font-black text-[9px] uppercase tracking-widest transition-all whitespace-nowrap ${activeHorariosSubTab === 'turnos' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400'}`}
-                          >Turnos</button>
-                          <button 
-                            onClick={() => setActiveHorariosSubTab('config')}
-                            className={`flex-1 md:flex-none px-4 py-2.5 rounded-lg font-black text-[9px] uppercase tracking-widest transition-all whitespace-nowrap ${activeHorariosSubTab === 'config' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400'}`}
-                          >Horas</button>
-                          <button 
-                            onClick={() => setActiveHorariosSubTab('materias')}
-                            className={`flex-1 md:flex-none px-4 py-2.5 rounded-lg font-black text-[9px] uppercase tracking-widest transition-all whitespace-nowrap ${activeHorariosSubTab === 'materias' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400'}`}
-                          >Materias</button>
-                          <button 
-                            onClick={() => setActiveHorariosSubTab('creador')}
-                            className={`flex-1 md:flex-none px-4 py-2.5 rounded-lg font-black text-[9px] uppercase tracking-widest transition-all whitespace-nowrap ${activeHorariosSubTab === 'creador' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400'}`}
-                          >Creador</button>
+                          {(currentUser?.role === 'admin' || currentUser?.permissions.includes('mi-panel:horarios:turnos')) && (
+                            <button 
+                              onClick={() => setActiveHorariosSubTab('turnos')}
+                              className={`flex-1 md:flex-none px-4 py-2.5 rounded-lg font-black text-[9px] uppercase tracking-widest transition-all whitespace-nowrap ${activeHorariosSubTab === 'turnos' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400'}`}
+                            >Turnos</button>
+                          )}
+                          {(currentUser?.role === 'admin' || currentUser?.permissions.includes('mi-panel:horarios:config')) && (
+                            <button 
+                              onClick={() => setActiveHorariosSubTab('config')}
+                              className={`flex-1 md:flex-none px-4 py-2.5 rounded-lg font-black text-[9px] uppercase tracking-widest transition-all whitespace-nowrap ${activeHorariosSubTab === 'config' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400'}`}
+                            >Horas</button>
+                          )}
+                          {(currentUser?.role === 'admin' || currentUser?.permissions.includes('mi-panel:horarios:materias')) && (
+                            <button 
+                              onClick={() => setActiveHorariosSubTab('materias')}
+                              className={`flex-1 md:flex-none px-4 py-2.5 rounded-lg font-black text-[9px] uppercase tracking-widest transition-all whitespace-nowrap ${activeHorariosSubTab === 'materias' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400'}`}
+                            >Materias</button>
+                          )}
+                          {(currentUser?.role === 'admin' || currentUser?.permissions.includes('mi-panel:horarios:creador')) && (
+                            <button 
+                              onClick={() => setActiveHorariosSubTab('creador')}
+                              className={`flex-1 md:flex-none px-4 py-2.5 rounded-lg font-black text-[9px] uppercase tracking-widest transition-all whitespace-nowrap ${activeHorariosSubTab === 'creador' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400'}`}
+                            >Creador</button>
+                          )}
                         </div>
                       </div>
 
@@ -5586,7 +6277,7 @@ const App = () => {
                   <p className="text-slate-500 text-lg">Administración global del sistema {activeConfig.siteName}.</p>
                 </div>
                 <div className="flex flex-col sm:flex-row bg-white p-2 rounded-2xl shadow-xl border border-slate-100 w-full sm:w-auto">
-                  {(currentUser?.role === 'admin' || currentUser?.role === 'enrolador') && !currentUser.parentId && (
+                  {(currentUser?.role === 'admin' || currentUser?.permissions.includes('config:usuarios')) && (
                     <button 
                       onClick={() => setActiveConfigSubTab('usuarios')}
                       className={`px-4 sm:px-8 py-3 sm:py-4 rounded-xl font-black text-[10px] sm:text-xs uppercase tracking-widest transition-all ${activeConfigSubTab === 'usuarios' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:text-slate-600'}`}
@@ -5594,12 +6285,14 @@ const App = () => {
                       Usuarios
                     </button>
                   )}
-                  <button 
-                    onClick={() => setActiveConfigSubTab('sistema')}
-                    className={`px-4 sm:px-8 py-3 sm:py-4 rounded-xl font-black text-[10px] sm:text-xs uppercase tracking-widest transition-all ${activeConfigSubTab === 'sistema' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:text-slate-600'}`}
-                  >
-                    Sistema
-                  </button>
+                  {(currentUser?.role === 'admin' || currentUser?.permissions.includes('config:sistema')) && (
+                    <button 
+                      onClick={() => setActiveConfigSubTab('sistema')}
+                      className={`px-4 sm:px-8 py-3 sm:py-4 rounded-xl font-black text-[10px] sm:text-xs uppercase tracking-widest transition-all ${activeConfigSubTab === 'sistema' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:text-slate-600'}`}
+                    >
+                      Sistema
+                    </button>
+                  )}
                 </div>
               </header>
 
@@ -5701,6 +6394,18 @@ const App = () => {
                           </div>
 
                           <div className="pt-4 border-t border-slate-50 flex flex-col gap-2">
+                            {currentUser?.role === 'enrolador' && (
+                              <button 
+                                onClick={() => {
+                                  setOriginalUser(currentUser);
+                                  setCurrentUser(user);
+                                  setToast({ message: `Ingresando como ${user.username}`, type: 'success' });
+                                }}
+                                className="flex items-center justify-center gap-2 w-full py-3 bg-emerald-600 text-white rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-emerald-700 transition-all shadow-lg"
+                              >
+                                <LogIn size={14} /> Ingresar como Usuario
+                              </button>
+                            )}
                             {user.role === 'admin' && !user.parentId && (
                               <button 
                                 onClick={() => {
@@ -5734,127 +6439,187 @@ const App = () => {
                   <div className="bg-white rounded-3xl md:rounded-[3rem] p-6 md:p-10 shadow-2xl border border-slate-100 space-y-10">
                     <div className="flex flex-col sm:flex-row items-center gap-4">
                       <div className="p-3 bg-amber-50 text-amber-600 rounded-2xl"><Palette size={24} /></div>
-                      <h3 className="text-xl font-black text-slate-800 uppercase text-center sm:text-left">Personalización Global</h3>
-                      <button 
-                        onClick={() => setPanelModalType('siteConfig')}
-                        className="sm:ml-auto w-full sm:w-auto px-6 py-3 bg-blue-50 text-blue-600 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-blue-100 transition-all flex items-center justify-center gap-2"
-                      >
-                        <Palette size={14} /> Temas y Logo
-                      </button>
+                      <h3 className="text-xl font-black text-slate-800 uppercase text-center sm:text-left flex items-center gap-3">
+                        Personalización Global
+                        {pendingConfig && (
+                          <span className="px-2 py-1 bg-amber-100 text-amber-600 text-[8px] rounded-full animate-pulse">Cambios Pendientes</span>
+                        )}
+                      </h3>
+                      <div className="sm:ml-auto flex gap-2 w-full sm:w-auto">
+                        <button 
+                          onClick={handlePublishConfig}
+                          className="flex-1 sm:flex-none px-6 py-3 bg-emerald-600 text-white rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-emerald-700 transition-all flex items-center justify-center gap-2 shadow-lg shadow-emerald-200"
+                        >
+                          <Check size={14} /> Publicar Cambios
+                        </button>
+                      </div>
                     </div>
 
-                    <div className="space-y-8">
-                      {/* Site Name and Slogan */}
-                      <div className="grid grid-cols-1 gap-6">
-                        <div className="space-y-3">
-                          <label className="flex items-center gap-2 text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2"><Globe size={14}/> Nombre del Sitio Web</label>
-                          <input 
-                            type="text" 
-                            value={globalConfig.siteName} 
-                            onChange={(e) => setGlobalConfig({...globalConfig, siteName: e.target.value})}
-                            className="w-full p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-lg outline-none transition-all"
-                          />
+                    <div className="space-y-12">
+                      {/* Site Information Section */}
+                      <section className="space-y-6">
+                        <div className="flex items-center gap-3 border-b border-slate-100 pb-4">
+                          <div className="w-1 h-6 bg-blue-500 rounded-full"></div>
+                          <h4 className="text-sm font-black text-slate-400 uppercase tracking-widest">Información del Sitio</h4>
                         </div>
-                        <div className="space-y-3">
-                          <label className="flex items-center gap-2 text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2"><Type size={14}/> Slogan Institucional</label>
-                          <input 
-                            type="text" 
-                            value={globalConfig.slogan} 
-                            onChange={(e) => setGlobalConfig({...globalConfig, slogan: e.target.value})}
-                            className="w-full p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-lg outline-none transition-all"
-                          />
-                        </div>
-                        <div className="space-y-3">
-                          <label className="flex items-center gap-2 text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2"><FileText size={14}/> Texto de Pie de Página</label>
-                          <input 
-                            type="text" 
-                            value={globalConfig.footerText} 
-                            onChange={(e) => setGlobalConfig({...globalConfig, footerText: e.target.value})}
-                            className="w-full p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-lg outline-none transition-all"
-                            placeholder="Control y Gestión 2026 © 2024"
-                          />
-                        </div>
-                      </div>
-
-                      {/* Logo Upload */}
-                      <div className="space-y-3">
-                        <label className="flex items-center gap-2 text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2"><ImageIcon size={14}/> Logo Institucional</label>
-                        <div className="flex items-center gap-6">
-                          <div className="w-20 h-20 bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200 flex items-center justify-center overflow-hidden">
-                            {globalConfig.logo ? <img src={globalConfig.logo} className="w-full h-full object-contain p-2" /> : <Upload className="text-slate-300" />}
-                          </div>
-                          <button 
-                            onClick={() => {
-                              const input = document.createElement('input');
-                              input.type = 'file';
-                              input.accept = 'image/*';
-                              input.onchange = (e: any) => {
-                                const file = e.target.files[0];
-                                const reader = new FileReader();
-                                reader.onload = (ev) => {
-                                  setGlobalConfig({...globalConfig, logo: ev.target?.result as string});
-                                };
-                                reader.readAsDataURL(file);
-                              };
-                              input.click();
-                            }}
-                            className="px-6 py-3 bg-slate-900 text-white rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-black transition-all"
-                          >
-                            Subir Logo
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* Colors */}
-                      <div className="grid grid-cols-2 gap-6">
-                        <div className="space-y-3">
-                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Color Primario</label>
-                          <div className="flex items-center gap-3 p-2 bg-slate-50 rounded-2xl border-2 border-slate-100">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                          <div className="space-y-3">
+                            <label className="flex items-center gap-2 text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2"><Globe size={14}/> Nombre del Sitio Web</label>
                             <input 
-                              type="color" 
-                              value={globalConfig.theme.primaryColor} 
-                              onChange={(e) => setGlobalConfig({...globalConfig, theme: {...globalConfig.theme, primaryColor: e.target.value}})}
-                              className="w-12 h-12 rounded-xl cursor-pointer border-none bg-transparent"
+                              type="text" 
+                              value={pendingConfig?.siteName || globalConfig.siteName} 
+                              onChange={(e) => setPendingConfig(prev => ({...(prev || globalConfig), siteName: e.target.value}))}
+                              className="w-full p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-lg outline-none transition-all"
                             />
-                            <span className="font-mono font-bold text-xs text-slate-500 uppercase">{globalConfig.theme.primaryColor}</span>
                           </div>
-                        </div>
-                        <div className="space-y-3">
-                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Color Secundario</label>
-                          <div className="flex items-center gap-3 p-2 bg-slate-50 rounded-2xl border-2 border-slate-100">
+                          <div className="space-y-3">
+                            <label className="flex items-center gap-2 text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2"><Type size={14}/> Slogan Institucional</label>
                             <input 
-                              type="color" 
-                              value={globalConfig.theme.secondaryColor} 
-                              onChange={(e) => setGlobalConfig({...globalConfig, theme: {...globalConfig.theme, secondaryColor: e.target.value}})}
-                              className="w-12 h-12 rounded-xl cursor-pointer border-none bg-transparent"
+                              type="text" 
+                              value={pendingConfig?.slogan || globalConfig.slogan} 
+                              onChange={(e) => setPendingConfig(prev => ({...(prev || globalConfig), slogan: e.target.value}))}
+                              className="w-full p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-lg outline-none transition-all"
                             />
-                            <span className="font-mono font-bold text-xs text-slate-500 uppercase">{globalConfig.theme.secondaryColor}</span>
+                          </div>
+                          <div className="space-y-3 md:col-span-2">
+                            <label className="flex items-center gap-2 text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2"><FileText size={14}/> Texto de Pie de Página</label>
+                            <input 
+                              type="text" 
+                              value={pendingConfig?.footerText || globalConfig.footerText} 
+                              onChange={(e) => setPendingConfig(prev => ({...(prev || globalConfig), footerText: e.target.value}))}
+                              className="w-full p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-lg outline-none transition-all"
+                              placeholder="Control y Gestión 2026 © 2024"
+                            />
                           </div>
                         </div>
-                      </div>
+                      </section>
 
-                      {/* Font Family */}
-                      <div className="space-y-3">
-                        <label className="flex items-center gap-2 text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2"><Type size={14}/> Fuente del Sistema</label>
-                        <select 
-                          value={globalConfig.theme.fontFamily}
-                          onChange={(e) => setGlobalConfig({...globalConfig, theme: {...globalConfig.theme, fontFamily: e.target.value}})}
-                          className="w-full p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-lg outline-none transition-all appearance-none"
-                        >
-                          <option value="Poppins">Poppins (Moderno)</option>
-                          <option value="Inter">Inter (Limpio)</option>
-                          <option value="Montserrat">Montserrat (Elegante)</option>
-                          <option value="Roboto">Roboto (Clásico)</option>
-                          <option value="system-ui">System Default</option>
-                        </select>
-                      </div>
+                      {/* Visual Identity Section */}
+                      <section className="space-y-6">
+                        <div className="flex items-center gap-3 border-b border-slate-100 pb-4">
+                          <div className="w-1 h-6 bg-amber-500 rounded-full"></div>
+                          <h4 className="text-sm font-black text-slate-400 uppercase tracking-widest">Identidad Visual</h4>
+                        </div>
+                        
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+                          {/* Logo Upload */}
+                          <div className="space-y-3">
+                            <label className="flex items-center gap-2 text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2"><ImageIcon size={14}/> Logo Institucional</label>
+                            <div className="flex flex-col items-center gap-4 p-6 bg-slate-50 rounded-3xl border-2 border-slate-100">
+                              <div className="w-24 h-24 bg-white rounded-2xl border-2 border-dashed border-slate-200 flex items-center justify-center overflow-hidden shadow-inner">
+                                {(pendingConfig?.logo || globalConfig.logo) ? <img src={pendingConfig?.logo || globalConfig.logo} className="w-full h-full object-contain p-2" /> : <Upload className="text-slate-300" />}
+                              </div>
+                              <button 
+                                onClick={() => {
+                                  const input = document.createElement('input');
+                                  input.type = 'file';
+                                  input.accept = 'image/*';
+                                  input.onchange = (e: any) => {
+                                    const file = e.target.files[0];
+                                    const reader = new FileReader();
+                                    reader.onload = (ev) => {
+                                      setPendingConfig(prev => ({...(prev || globalConfig), logo: ev.target?.result as string}));
+                                    };
+                                    reader.readAsDataURL(file);
+                                  };
+                                  input.click();
+                                }}
+                                className="w-full py-3 bg-slate-900 text-white rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-black transition-all"
+                              >
+                                Cambiar Logo
+                              </button>
+                            </div>
+                          </div>
 
-                      <div className="pt-6">
+                          {/* Custom Colors */}
+                          <div className="md:col-span-2 space-y-6">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                              <div className="space-y-3">
+                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Color Primario</label>
+                                <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-2xl border-2 border-slate-100">
+                                  <input 
+                                    type="color" 
+                                    value={pendingConfig?.theme.primaryColor || globalConfig.theme.primaryColor} 
+                                    onChange={(e) => setPendingConfig(prev => ({...(prev || globalConfig), theme: {...(prev || globalConfig).theme, primaryColor: e.target.value}}))}
+                                    className="w-12 h-12 rounded-xl cursor-pointer border-none bg-transparent"
+                                  />
+                                  <span className="font-mono font-bold text-sm text-slate-500 uppercase">{pendingConfig?.theme.primaryColor || globalConfig.theme.primaryColor}</span>
+                                </div>
+                              </div>
+                              <div className="space-y-3">
+                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Color Secundario</label>
+                                <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-2xl border-2 border-slate-100">
+                                  <input 
+                                    type="color" 
+                                    value={pendingConfig?.theme.secondaryColor || globalConfig.theme.secondaryColor} 
+                                    onChange={(e) => setPendingConfig(prev => ({...(prev || globalConfig), theme: {...(prev || globalConfig).theme, secondaryColor: e.target.value}}))}
+                                    className="w-12 h-12 rounded-xl cursor-pointer border-none bg-transparent"
+                                  />
+                                  <span className="font-mono font-bold text-sm text-slate-500 uppercase">{pendingConfig?.theme.secondaryColor || globalConfig.theme.secondaryColor}</span>
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="space-y-3">
+                              <label className="flex items-center gap-2 text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2"><Type size={14}/> Fuente del Sistema</label>
+                              <select 
+                                value={pendingConfig?.theme.fontFamily || globalConfig.theme.fontFamily}
+                                onChange={(e) => setPendingConfig(prev => ({...(prev || globalConfig), theme: {...(prev || globalConfig).theme, fontFamily: e.target.value}}))}
+                                className="w-full p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-lg outline-none transition-all appearance-none"
+                              >
+                                <option value="Poppins">Poppins (Moderno)</option>
+                                <option value="Inter">Inter (Limpio)</option>
+                                <option value="Montserrat">Montserrat (Elegante)</option>
+                                <option value="Roboto">Roboto (Clásico)</option>
+                                <option value="system-ui">System Default</option>
+                              </select>
+                            </div>
+                          </div>
+                        </div>
+                      </section>
+
+                      {/* Predefined Themes Section */}
+                      <section className="space-y-6">
+                        <div className="flex items-center gap-3 border-b border-slate-100 pb-4">
+                          <div className="w-1 h-6 bg-emerald-500 rounded-full"></div>
+                          <h4 className="text-sm font-black text-slate-400 uppercase tracking-widest">Temas Predeterminados</h4>
+                        </div>
+                        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-4">
+                          {PREDEFINED_THEMES.map((theme) => (
+                            <button
+                              key={theme.name}
+                              onClick={() => setPendingConfig(prev => ({
+                                ...(prev || globalConfig),
+                                theme: { 
+                                  ...(prev || globalConfig).theme, 
+                                  primaryColor: theme.primary, 
+                                  secondaryColor: theme.secondary 
+                                }
+                              }))}
+                              className={`group p-3 rounded-2xl border-2 transition-all text-center ${
+                                (pendingConfig?.theme.primaryColor || globalConfig.theme.primaryColor) === theme.primary 
+                                ? 'border-blue-500 bg-blue-50' 
+                                : 'border-slate-50 hover:border-slate-200 bg-white'
+                              }`}
+                            >
+                              <div className="flex flex-col gap-1 mb-3">
+                                <div className="w-full h-4 rounded-full shadow-sm" style={{ backgroundColor: theme.primary }}></div>
+                                <div className="w-full h-2 rounded-full opacity-50" style={{ backgroundColor: theme.secondary }}></div>
+                              </div>
+                              <span className="text-[8px] font-black uppercase tracking-widest text-slate-400 group-hover:text-slate-600 block truncate">{theme.name}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </section>
+
+                      <div className="pt-10 border-t border-slate-100">
                         <button 
                           onClick={() => {
                             if(confirm("¿Restablecer toda la configuración a los valores predeterminados?")) {
-                              setGlobalConfig({
+                              setPendingConfig({
+                                ...globalConfig,
                                 siteName: 'Sistema de Control y Gestión',
+                                slogan: 'Educación con Valores y Tecnología',
                                 theme: {
                                   primaryColor: '#1e3a8a',
                                   secondaryColor: '#3b82f6',
@@ -5863,9 +6628,9 @@ const App = () => {
                               });
                             }
                           }}
-                          className="w-full py-4 border-2 border-rose-100 text-rose-500 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-rose-50 transition-all"
+                          className="w-full py-5 border-2 border-rose-100 text-rose-500 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-rose-50 transition-all flex items-center justify-center gap-3"
                         >
-                          Restablecer Configuración
+                          <RefreshCw size={14} /> Restablecer Configuración de Fábrica
                         </button>
                       </div>
                     </div>
@@ -5980,138 +6745,173 @@ const App = () => {
               </div>
               <button onClick={() => setIsStudentModalOpen(false)} className="hover:bg-white/20 p-2 md:p-3 rounded-full transition-all"><X size={20} md:size={24} /></button>
             </div>
-            <form onSubmit={handleSaveStudent} className="p-5 md:p-10 space-y-5 md:space-y-8 bg-white">
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
-                {/* Section 1: Identity */}
-                <div className="space-y-2">
-                  <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-2">1. Cargo (Rol)</label>
-                  <select name="rol" defaultValue={editingStudent?.rol || 'Estudiante'} className="w-full p-3 md:p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-blue-800 text-sm md:text-lg appearance-none shadow-sm transition-all outline-none">
-                    <option value="Estudiante">Estudiante</option>
-                    <option value="Docente">Docente</option>
-                  </select>
-                </div>
-                <div className="space-y-2">
-                  <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-2">2. DNI / Identificación</label>
-                  <input name="dni" defaultValue={editingStudent?.dni} required placeholder="Número de DNI" className="w-full p-3 md:p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black font-mono text-sm md:text-xl shadow-sm transition-all outline-none" />
-                </div>
-                <div className="space-y-2">
-                  <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-2">3. Nombres</label>
-                  <input name="nombre" defaultValue={editingStudent?.nombre} required placeholder="Nombres del titular" className="w-full p-3 md:p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-sm md:text-lg shadow-sm transition-all outline-none" />
-                </div>
-
-                {/* Section 2: Personal Details */}
-                <div className="space-y-2 md:col-span-2">
-                  <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-2">4. Apellidos Completos</label>
-                  <input name="apellido" defaultValue={editingStudent?.apellido} required placeholder="Apellidos paterno y materno" className="w-full p-3 md:p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-sm md:text-lg shadow-sm transition-all outline-none" />
-                </div>
-                <div className="space-y-2">
-                  <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-2">5. Nivel</label>
-                  <select name="nivel" defaultValue={editingStudent?.nivel || 'Primaria'} className="w-full p-3 md:p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-sm md:text-lg shadow-sm appearance-none outline-none">
-                    {levels.map(lvl => (
-                      <option key={lvl.id} value={lvl.nombre}>{lvl.nombre}</option>
-                    ))}
-                    <option value="Docente">Docente</option>
-                  </select>
-                </div>
-                <div className="space-y-2">
-                  <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-2">6. Grado / Aula</label>
-                  <select name="grado" defaultValue={editingStudent?.grado} className="w-full p-3 md:p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-sm md:text-lg shadow-sm appearance-none outline-none">
-                    {gradeLevels.map(gl => (
-                      <option key={gl.id} value={gl.nombre}>{gl.nombre}</option>
-                    ))}
-                    {!gradeLevels.length && <option value="">No hay grados registrados</option>}
-                  </select>
-                </div>
-
-                {/* Section 3: More Details */}
-                <div className="space-y-2">
-                  <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-2">7. Sección</label>
-                  <select name="seccion" defaultValue={editingStudent?.seccion || 'A'} className="w-full p-3 md:p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-sm md:text-lg shadow-sm appearance-none outline-none">
-                    {['A', 'B', 'C', 'D', 'E', 'F', 'G'].map(s => (
-                      <option key={s} value={s}>{s}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="space-y-2">
-                  <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-2">7. Celular Apoderado (Opcional)</label>
-                  <div className="relative">
-                    <Phone size={14} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-                    <input name="celularApoderado" defaultValue={editingStudent?.celularApoderado} placeholder="999 999 999" className="w-full pl-11 p-3 md:p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-sm md:text-lg shadow-sm outline-none" />
+            <form onSubmit={handleSaveStudent} className="p-5 md:p-10 space-y-8 bg-white">
+              <div className="space-y-8">
+                {/* Section: Identity & Role */}
+                <div className="bg-slate-50/50 p-6 rounded-[2.5rem] border border-slate-100 space-y-6">
+                  <div className="flex items-center gap-3 mb-2">
+                    <div className="w-8 h-8 bg-blue-600 text-white rounded-xl flex items-center justify-center shadow-lg shadow-blue-200">
+                      <User size={16} />
+                    </div>
+                    <h3 className="text-xs font-black text-slate-800 uppercase tracking-widest">Información de Identidad</h3>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <div className="space-y-2">
+                      <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Cargo (Rol)</label>
+                      <select name="rol" defaultValue={editingStudent?.rol || 'Estudiante'} className="w-full p-4 rounded-2xl bg-white border-2 border-slate-100 focus:border-blue-500 font-black text-blue-800 text-sm appearance-none shadow-sm transition-all outline-none">
+                        <option value="Estudiante">Estudiante</option>
+                        <option value="Docente">Docente</option>
+                      </select>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">DNI / Identificación</label>
+                      <input name="dni" defaultValue={editingStudent?.dni} required placeholder="Número de DNI" className="w-full p-4 rounded-2xl bg-white border-2 border-slate-100 focus:border-blue-500 font-black font-mono text-base shadow-sm transition-all outline-none" />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Nombres</label>
+                      <input name="nombre" defaultValue={editingStudent?.nombre} required placeholder="Nombres" className="w-full p-4 rounded-2xl bg-white border-2 border-slate-100 focus:border-blue-500 font-black text-sm shadow-sm transition-all outline-none" />
+                    </div>
+                    <div className="space-y-2 md:col-span-3">
+                      <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Apellidos Completos</label>
+                      <input name="apellido" defaultValue={editingStudent?.apellido} required placeholder="Apellidos paterno y materno" className="w-full p-4 rounded-2xl bg-white border-2 border-slate-100 focus:border-blue-500 font-black text-sm shadow-sm transition-all outline-none" />
+                    </div>
                   </div>
                 </div>
-                <div className="space-y-2">
-                  <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-2">8. Correo Electrónico (Opcional)</label>
-                  <div className="relative">
-                    <Mail size={14} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-                    <input name="email" type="email" defaultValue={editingStudent?.email} placeholder="ejemplo@correo.com" className="w-full pl-11 p-3 md:p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-sm md:text-lg shadow-sm outline-none" />
+
+                {/* Section: Academic Info */}
+                <div className="bg-slate-50/50 p-6 rounded-[2.5rem] border border-slate-100 space-y-6">
+                  <div className="flex items-center gap-3 mb-2">
+                    <div className="w-8 h-8 bg-indigo-600 text-white rounded-xl flex items-center justify-center shadow-lg shadow-indigo-200">
+                      <GraduationCap size={16} />
+                    </div>
+                    <h3 className="text-xs font-black text-slate-800 uppercase tracking-widest">Detalles Académicos</h3>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <div className="space-y-2">
+                      <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Nivel</label>
+                      <select name="nivel" defaultValue={editingStudent?.nivel || 'Primaria'} className="w-full p-4 rounded-2xl bg-white border-2 border-slate-100 focus:border-blue-500 font-black text-sm shadow-sm appearance-none outline-none">
+                        {levels.map(lvl => (
+                          <option key={lvl.id} value={lvl.nombre}>{lvl.nombre}</option>
+                        ))}
+                        <option value="Docente">Docente</option>
+                      </select>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Grado / Aula</label>
+                      <select name="grado" defaultValue={editingStudent?.grado} className="w-full p-4 rounded-2xl bg-white border-2 border-slate-100 focus:border-blue-500 font-black text-sm shadow-sm appearance-none outline-none">
+                        {gradeLevels.map(gl => (
+                          <option key={gl.id} value={gl.nombre}>{gl.nombre}</option>
+                        ))}
+                        {!gradeLevels.length && <option value="">No hay grados</option>}
+                      </select>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Sección</label>
+                      <select name="seccion" defaultValue={editingStudent?.seccion || sections[0] || 'A'} className="w-full p-4 rounded-2xl bg-white border-2 border-slate-100 focus:border-blue-500 font-black text-sm shadow-sm appearance-none outline-none">
+                        {sections.map(s => (
+                          <option key={s} value={s}>{s}</option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
                 </div>
-                <div className="space-y-2">
-                  <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-2">9. Turno (Opcional)</label>
-                  <select name="turno" defaultValue={editingStudent?.turno || 'Mañana'} className="w-full p-4 md:p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-base md:text-lg shadow-sm appearance-none outline-none">
-                    {shifts.map(s => (
-                      <option key={s.id} value={s.nombre}>{s.nombre}</option>
-                    ))}
-                    {!shifts.length && (
-                      <>
-                        <option value="Mañana">Mañana</option>
-                        <option value="Tarde">Tarde</option>
-                        <option value="Noche">Noche</option>
-                      </>
-                    )}
-                    <option value="Sin asignar">Sin asignar</option>
-                  </select>
+
+                {/* Section: Contact & School */}
+                <div className="bg-slate-50/50 p-6 rounded-[2.5rem] border border-slate-100 space-y-6">
+                  <div className="flex items-center gap-3 mb-2">
+                    <div className="w-8 h-8 bg-emerald-600 text-white rounded-xl flex items-center justify-center shadow-lg shadow-emerald-200">
+                      <Phone size={16} />
+                    </div>
+                    <h3 className="text-xs font-black text-slate-800 uppercase tracking-widest">Contacto y Procedencia</h3>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-2">
+                      <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Celular Apoderado</label>
+                      <div className="relative">
+                        <Phone size={14} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                        <input name="celularApoderado" defaultValue={editingStudent?.celularApoderado} placeholder="999 999 999" className="w-full pl-11 p-4 rounded-2xl bg-white border-2 border-slate-100 focus:border-blue-500 font-black text-sm shadow-sm outline-none" />
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Correo Electrónico</label>
+                      <div className="relative">
+                        <Mail size={14} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                        <input name="email" type="email" defaultValue={editingStudent?.email} placeholder="ejemplo@correo.com" className="w-full pl-11 p-4 rounded-2xl bg-white border-2 border-slate-100 focus:border-blue-500 font-black text-sm shadow-sm outline-none" />
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Nombre del Colegio</label>
+                      <div className="relative">
+                        <School size={14} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                        <input name="schoolName" defaultValue={editingStudent?.schoolName} placeholder="Nombre del colegio" className="w-full pl-11 p-4 rounded-2xl bg-white border-2 border-slate-100 focus:border-blue-500 font-black text-sm shadow-sm outline-none" />
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Celular del Estudiante</label>
+                      <div className="relative">
+                        <Phone size={14} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                        <input name="studentPhone" defaultValue={editingStudent?.studentPhone} placeholder="999 999 999" className="w-full pl-11 p-4 rounded-2xl bg-white border-2 border-slate-100 focus:border-blue-500 font-black text-sm shadow-sm outline-none" />
+                      </div>
+                    </div>
+                  </div>
                 </div>
 
                 {/* Personalization Section */}
-                <div className="space-y-3 md:col-span-3 pt-6 border-t border-slate-100">
-                  <h4 className="text-[9px] md:text-[10px] font-black text-blue-600 uppercase tracking-[0.3em] mb-4">Personalización de Fotocheck (Opcional)</h4>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-8">
+                <div className="bg-slate-900 p-6 rounded-[2.5rem] space-y-6">
+                  <div className="flex items-center gap-3 mb-2">
+                    <div className="w-8 h-8 bg-blue-500 text-white rounded-xl flex items-center justify-center shadow-lg shadow-blue-500/20">
+                      <Sparkles size={16} />
+                    </div>
+                    <h3 className="text-xs font-black text-white uppercase tracking-widest">Personalización de Fotocheck</h3>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div className="space-y-2">
-                      <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-2">Nombre del Sitio (Personalizado)</label>
-                      <input name="siteName" defaultValue={editingStudent?.siteName} placeholder="Ej. I.E. San Juan Bautista" className="w-full p-4 md:p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-base md:text-lg shadow-sm outline-none" />
+                      <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Nombre del Sitio</label>
+                      <input name="siteName" defaultValue={editingStudent?.siteName} placeholder="Ej. I.E. San Juan Bautista" className="w-full p-4 rounded-2xl bg-slate-800 border-2 border-slate-700 focus:border-blue-500 font-black text-white text-sm shadow-sm outline-none" />
                     </div>
                     <div className="space-y-2">
-                      <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-2">Slogan (Personalizado)</label>
-                      <input name="slogan" defaultValue={editingStudent?.slogan} placeholder="Ej. Educación de Calidad" className="w-full p-4 md:p-5 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-base md:text-lg shadow-sm outline-none" />
+                      <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Slogan</label>
+                      <input name="slogan" defaultValue={editingStudent?.slogan} placeholder="Ej. Educación de Calidad" className="w-full p-4 rounded-2xl bg-slate-800 border-2 border-slate-700 focus:border-blue-500 font-black text-white text-sm shadow-sm outline-none" />
                     </div>
                     <div className="space-y-2 md:col-span-2">
-                      <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-2">Logo Institucional (Personalizado)</label>
-                      <div className="flex flex-col sm:flex-row items-center gap-4 md:gap-6">
-                        <div className="w-16 h-16 bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200 flex items-center justify-center overflow-hidden">
-                          {editingStudent?.logo ? <img src={editingStudent.logo} className="w-full h-full object-contain p-2" /> : <Upload className="text-slate-300" />}
+                      <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Logo Institucional</label>
+                      <div className="flex flex-col sm:flex-row items-center gap-6 p-4 bg-slate-800 rounded-2xl border border-slate-700">
+                        <div className="w-16 h-16 bg-slate-900 rounded-2xl border-2 border-dashed border-slate-700 flex items-center justify-center overflow-hidden shrink-0">
+                          {editingStudent?.logo ? <img src={editingStudent.logo} className="w-full h-full object-contain p-2" /> : <Upload className="text-slate-600" />}
                         </div>
-                        <button 
-                          type="button"
-                          onClick={() => {
-                            const input = document.createElement('input');
-                            input.type = 'file';
-                            input.accept = 'image/*';
-                            input.onchange = (e: any) => {
-                              const file = e.target.files[0];
-                              const reader = new FileReader();
-                              reader.onload = (ev) => {
-                                if (editingStudent) {
-                                  setEditingStudent({ ...editingStudent, logo: ev.target?.result as string });
-                                }
-                              };
-                              reader.readAsDataURL(file);
-                            };
-                            input.click();
-                          }}
-                          className="w-full sm:w-auto px-6 py-3 bg-slate-900 text-white rounded-xl font-black text-[9px] md:text-[10px] uppercase tracking-widest hover:bg-black transition-all"
-                        >
-                          Subir Logo para este Estudiante
-                        </button>
-                        {editingStudent?.logo && (
+                        <div className="flex flex-col gap-2 w-full">
                           <button 
                             type="button"
-                            onClick={() => setEditingStudent({ ...editingStudent, logo: undefined })}
-                            className="text-[9px] md:text-[10px] font-black text-rose-500 uppercase tracking-widest hover:underline"
+                            onClick={() => {
+                              const input = document.createElement('input');
+                              input.type = 'file';
+                              input.accept = 'image/*';
+                              input.onchange = (e: any) => {
+                                const file = e.target.files[0];
+                                const reader = new FileReader();
+                                reader.onload = (ev) => {
+                                  if (editingStudent) {
+                                    setEditingStudent({ ...editingStudent, logo: ev.target?.result as string });
+                                  }
+                                };
+                                reader.readAsDataURL(file);
+                              };
+                              input.click();
+                            }}
+                            className="px-6 py-3 bg-blue-600 text-white rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-blue-700 transition-all shadow-lg shadow-blue-900/20"
                           >
-                            Eliminar Logo
+                            Subir Logo Personalizado
                           </button>
-                        )}
+                          {editingStudent?.logo && (
+                            <button 
+                              type="button"
+                              onClick={() => setEditingStudent({ ...editingStudent, logo: undefined })}
+                              className="text-[9px] font-black text-rose-400 uppercase tracking-widest hover:text-rose-300 transition-all text-left ml-2"
+                            >
+                              Eliminar Logo
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -6249,7 +7049,7 @@ const App = () => {
                   setLevels(levels.map(l => l.id === editingLevel.id ? { ...l, nombre } : l));
                   setToast({ message: "Nivel actualizado", type: 'success' });
                 } else {
-                  setLevels([...levels, { id: Date.now().toString(), nombre }]);
+                  setLevels([...levels, { id: Date.now().toString(), ownerId: currentUser?.parentId || currentUser?.id || 'admin-1', nombre }]);
                   setToast({ message: "Nivel creado", type: 'success' });
                 }
                 setPanelModalType(null);
@@ -6285,7 +7085,7 @@ const App = () => {
                   setGradeLevels(gradeLevels.map(gl => gl.id === editingGradeLevel.id ? { ...gl, nombre, seccion, nivelId } : gl));
                   setToast({ message: "Grado actualizado", type: 'success' });
                 } else {
-                  setGradeLevels([...gradeLevels, { id: Date.now().toString(), nombre, seccion, nivelId }]);
+                  setGradeLevels([...gradeLevels, { id: Date.now().toString(), ownerId: currentUser?.parentId || currentUser?.id || 'admin-1', nombre, seccion, nivelId }]);
                   setToast({ message: "Grado creado", type: 'success' });
                 }
                 setPanelModalType(null);
@@ -6337,7 +7137,7 @@ const App = () => {
                   setShifts(shifts.map(s => s.id === editingShift.id ? { ...s, nombre, entradaMañana: em, salidaMañana: sm, entradaTarde: et || '-', salidaTarde: st || '-' } : s));
                   setToast({ message: "Turno actualizado", type: 'success' });
                 } else {
-                  setShifts([...shifts, { id: Date.now().toString(), nombre, entradaMañana: em, salidaMañana: sm, entradaTarde: et || '-', salidaTarde: st || '-' }]);
+                  setShifts([...shifts, { id: Date.now().toString(), ownerId: currentUser?.parentId || currentUser?.id || 'admin-1', nombre, entradaMañana: em, salidaMañana: sm, entradaTarde: et || '-', salidaTarde: st || '-' }]);
                   setToast({ message: "Turno creado", type: 'success' });
                 }
                 setPanelModalType(null);
@@ -6388,7 +7188,7 @@ const App = () => {
                 const fin = e.target.fin.value;
                 const materia = e.target.materia?.value;
                 if(type && dia && inicio && fin) {
-                  setSchedules([...schedules, { id: Date.now().toString(), targetId: 'global', type, dia, inicio, fin, materia }]);
+                  setSchedules([...schedules, { id: Date.now().toString(), ownerId: currentUser?.parentId || currentUser?.id || 'admin-1', targetId: 'global', type, dia, inicio, fin, materia }]);
                   setPanelModalType(null);
                 }
               }} className="space-y-6">
@@ -6447,7 +7247,7 @@ const App = () => {
                 setCurrentUser(updatedUser);
                 setUsers(users.map(u => u.id === currentUser.id ? updatedUser : u));
                 setPanelModalType(null);
-                alert("Perfil actualizado correctamente.");
+                setToast({ message: "Perfil actualizado correctamente.", type: 'success' });
               }
             }} className="p-10 space-y-6">
               <div className="space-y-2">
@@ -6493,7 +7293,7 @@ const App = () => {
                 };
                 setNotifications([newNotif, ...notifications]);
                 setPanelModalType(null);
-                alert("Reporte registrado y enviado a notificaciones.");
+                setToast({ message: "Reporte registrado y enviado a notificaciones.", type: 'success' });
               }
             }} className="p-10 space-y-6">
               <div className="space-y-2">
@@ -6551,7 +7351,7 @@ const App = () => {
                           setUsers(updatedUsers);
                           setConfigTargetUser(updatedUsers.find(u => u.id === configTargetUser.id) || null);
                         } else {
-                          setGlobalConfig({ ...globalConfig, siteName: e.target.value });
+                          setGlobalConfig(prev => ({ ...prev, siteName: e.target.value }));
                         }
                       }}
                       className="w-full p-3 md:p-4 rounded-xl md:rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-sm md:text-lg outline-none transition-all" 
@@ -6575,7 +7375,7 @@ const App = () => {
                           setUsers(updatedUsers);
                           setConfigTargetUser(updatedUsers.find(u => u.id === configTargetUser.id) || null);
                         } else {
-                          setGlobalConfig({ ...globalConfig, slogan: e.target.value });
+                          setGlobalConfig(prev => ({ ...prev, slogan: e.target.value }));
                         }
                       }}
                       className="w-full p-3 md:p-4 rounded-xl md:rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-sm md:text-lg outline-none transition-all" 
@@ -6616,7 +7416,7 @@ const App = () => {
                                 setUsers(updatedUsers);
                                 setConfigTargetUser(updatedUsers.find(u => u.id === configTargetUser.id) || null);
                               } else {
-                                setGlobalConfig({ ...globalConfig, logo: ev.target?.result as string });
+                                setGlobalConfig(prev => ({ ...prev, logo: ev.target?.result as string }));
                               }
                             };
                             reader.readAsDataURL(file);
@@ -6642,7 +7442,7 @@ const App = () => {
                             setUsers(updatedUsers);
                             setConfigTargetUser(updatedUsers.find(u => u.id === configTargetUser.id) || null);
                           } else {
-                            setGlobalConfig({ ...globalConfig, logo: undefined });
+                            setGlobalConfig(prev => ({ ...prev, logo: undefined }));
                           }
                         }}
                         className="w-full sm:px-6 py-3 border-2 border-slate-200 text-slate-400 rounded-xl font-black text-[9px] md:text-[10px] uppercase tracking-widest hover:bg-slate-100 transition-all"
@@ -6683,10 +7483,10 @@ const App = () => {
                             setUsers(updatedUsers);
                             setConfigTargetUser(updatedUsers.find(u => u.id === configTargetUser.id) || null);
                           } else {
-                            setGlobalConfig({
-                              ...globalConfig,
-                              theme: { ...globalConfig.theme, primaryColor: theme.primary, secondaryColor: theme.secondary }
-                            });
+                            setGlobalConfig(prev => ({
+                              ...prev,
+                              theme: { ...prev.theme, primaryColor: theme.primary, secondaryColor: theme.secondary }
+                            }));
                           }
                         }}
                         className="p-3 rounded-2xl border-2 border-slate-100 hover:border-blue-500 transition-all text-left"
@@ -6702,7 +7502,7 @@ const App = () => {
                 </div>
 
                 {/* Custom Colors */}
-                <div className="grid grid-cols-2 gap-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div className="space-y-2">
                     <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Color Primario</label>
                     <div className="flex items-center gap-3 p-2 bg-slate-50 rounded-2xl border-2 border-slate-100">
@@ -6728,7 +7528,7 @@ const App = () => {
                             setUsers(updatedUsers);
                             setConfigTargetUser(updatedUsers.find(u => u.id === configTargetUser.id) || null);
                           } else {
-                            setGlobalConfig({ ...globalConfig, theme: { ...globalConfig.theme, primaryColor: e.target.value } });
+                            setGlobalConfig(prev => ({ ...prev, theme: { ...prev.theme, primaryColor: e.target.value } }));
                           }
                         }}
                         className="w-10 h-10 rounded-xl cursor-pointer border-none bg-transparent"
@@ -6761,7 +7561,7 @@ const App = () => {
                             setUsers(updatedUsers);
                             setConfigTargetUser(updatedUsers.find(u => u.id === configTargetUser.id) || null);
                           } else {
-                            setGlobalConfig({ ...globalConfig, theme: { ...globalConfig.theme, secondaryColor: e.target.value } });
+                            setGlobalConfig(prev => ({ ...prev, theme: { ...prev.theme, secondaryColor: e.target.value } }));
                           }
                         }}
                         className="w-10 h-10 rounded-xl cursor-pointer border-none bg-transparent"
@@ -6769,6 +7569,42 @@ const App = () => {
                       <span className="font-mono font-bold text-[10px] text-slate-500 uppercase">{targetConfig.theme.secondaryColor}</span>
                     </div>
                   </div>
+                </div>
+
+                {/* Font Family */}
+                <div className="space-y-2">
+                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Fuente del Sistema</label>
+                  <select 
+                    value={targetConfig.theme.fontFamily}
+                    onChange={(e) => {
+                      if(configTargetUser) {
+                        const updatedUsers = users.map(u => {
+                          if(u.id === configTargetUser.id) {
+                            const updated = {
+                              ...u,
+                              config: {
+                                ...(u.config || globalConfig),
+                                theme: { ...(u.config?.theme || globalConfig.theme), fontFamily: e.target.value }
+                              }
+                            };
+                            if(currentUser?.id === u.id) setCurrentUser(updated);
+                            return updated;
+                          }
+                          return u;
+                        });
+                        setUsers(updatedUsers);
+                        setConfigTargetUser(updatedUsers.find(u => u.id === configTargetUser.id) || null);
+                      } else {
+                        setGlobalConfig(prev => ({ ...prev, theme: { ...prev.theme, fontFamily: e.target.value } }));
+                      }
+                    }}
+                    className="w-full p-4 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-sm outline-none transition-all appearance-none"
+                  >
+                    <option value="Poppins">Poppins (Moderno)</option>
+                    <option value="Inter">Inter (Limpio)</option>
+                    <option value="Montserrat">Montserrat (Elegante)</option>
+                    <option value="Roboto">Roboto (Clásico)</option>
+                  </select>
                 </div>
 
                 {/* Credential Personalization Section */}
@@ -7253,26 +8089,41 @@ const App = () => {
                   </select>
                 </div>
                 <div className="space-y-2">
-                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Vincular Estudiante/Docente</label>
-                  <select name="studentId" defaultValue={editingUser?.studentId || ''} className="w-full p-3 md:p-4 rounded-xl md:rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-sm md:text-lg appearance-none outline-none">
+                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Vincular a Usuario (Enrolador)</label>
+                  <select name="linkedUserId" defaultValue={editingUser?.linkedUserId || ''} className="w-full p-3 md:p-4 rounded-xl md:rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-sm md:text-lg appearance-none outline-none">
                     <option value="">Sin vincular</option>
-                    {students.map(s => (
-                      <option key={s.id} value={s.id}>{s.rol}: {s.nombre}</option>
+                    {users.filter(u => u.id !== editingUser?.id).map(u => (
+                      <option key={u.id} value={u.id}>{u.role.toUpperCase()}: {u.fullName || u.username}</option>
                     ))}
                   </select>
+                </div>
+                <div className="space-y-2 md:col-span-2">
+                  <label className="flex items-center gap-3 p-4 rounded-2xl bg-blue-50 border-2 border-blue-100 cursor-pointer hover:bg-blue-100 transition-all">
+                    <input 
+                      type="checkbox" 
+                      name="hasOwnDatabase" 
+                      defaultChecked={editingUser ? editingUser.hasOwnDatabase : true}
+                      className="w-5 h-5 rounded text-blue-600 focus:ring-blue-500" 
+                    />
+                    <div>
+                      <span className="block text-xs font-black text-blue-900 uppercase tracking-tight">Base de datos propia</span>
+                      <span className="block text-[9px] font-bold text-blue-600 uppercase tracking-widest mt-0.5">Crea una instancia separada para este usuario</span>
+                    </div>
+                  </label>
                 </div>
               </div>
 
               {(currentUser?.role === 'admin' || currentUser?.role === 'enrolador') && !currentUser.parentId && (
-                <>
-                  <div className="space-y-4 pt-4 border-t border-slate-100">
-                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Permisos de Acceso (Mínimo 1)</label>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                <div className="space-y-6 pt-4 border-t border-slate-100 max-h-[40vh] overflow-y-auto pr-2 no-scrollbar">
+                  <div className="space-y-4">
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Permisos de Acceso (Menú Principal)</label>
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
                       {[
                         { id: 'dashboard', label: 'Dashboard' },
                         { id: 'estudiantes', label: 'Base Datos' },
                         { id: 'asistencia', label: 'Asistencia' },
                         { id: 'reportes', label: 'Reportes' },
+                        { id: 'matricula', label: 'Matrícula' },
                         { id: 'alerta', label: 'Alerta' },
                         { id: 'calificaciones', label: 'Notas' },
                         { id: 'mi-panel', label: 'Mi Panel' },
@@ -7293,8 +8144,94 @@ const App = () => {
                   </div>
 
                   <div className="space-y-4 pt-4 border-t border-slate-100">
-                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Sub-Permisos (Mi Panel)</label>
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Sub-Permisos (Notas / Calificaciones)</label>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                      {[
+                        { id: 'calificaciones:lista', label: 'Lista' },
+                        { id: 'calificaciones:registros', label: 'Registros' },
+                        { id: 'calificaciones:boletas', label: 'Boletas' },
+                        { id: 'calificaciones:calificar', label: 'Calificar' }
+                      ].map(perm => (
+                        <label key={perm.id} className="flex items-center gap-2 p-3 rounded-xl bg-slate-50 border border-slate-100 cursor-pointer hover:bg-slate-100 transition-all">
+                          <input 
+                            type="checkbox" 
+                            name="permissions" 
+                            value={perm.id} 
+                            defaultChecked={editingUser ? editingUser.permissions.includes(perm.id) : true}
+                            className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500"
+                          />
+                          <span className="text-[10px] font-bold text-slate-600 uppercase tracking-tight">{perm.label}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="space-y-4 pt-4 border-t border-slate-100">
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Sub-Permisos (Reportes)</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      {[
+                        { id: 'reportes:global', label: 'Reporte Global' },
+                        { id: 'reportes:personalizado', label: 'Personalizado' }
+                      ].map(perm => (
+                        <label key={perm.id} className="flex items-center gap-2 p-3 rounded-xl bg-slate-50 border border-slate-100 cursor-pointer hover:bg-slate-100 transition-all">
+                          <input 
+                            type="checkbox" 
+                            name="permissions" 
+                            value={perm.id} 
+                            defaultChecked={editingUser ? editingUser.permissions.includes(perm.id) : true}
+                            className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500"
+                          />
+                          <span className="text-[10px] font-bold text-slate-600 uppercase tracking-tight">{perm.label}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="space-y-4 pt-4 border-t border-slate-100">
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Sub-Permisos (Alerta)</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      {[
+                        { id: 'alerta:registro', label: 'Registrar Incidencia' },
+                        { id: 'alerta:historial', label: 'Historial' }
+                      ].map(perm => (
+                        <label key={perm.id} className="flex items-center gap-2 p-3 rounded-xl bg-slate-50 border border-slate-100 cursor-pointer hover:bg-slate-100 transition-all">
+                          <input 
+                            type="checkbox" 
+                            name="permissions" 
+                            value={perm.id} 
+                            defaultChecked={editingUser ? editingUser.permissions.includes(perm.id) : true}
+                            className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500"
+                          />
+                          <span className="text-[10px] font-bold text-slate-600 uppercase tracking-tight">{perm.label}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="space-y-4 pt-4 border-t border-slate-100">
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Sub-Permisos (Configuración)</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      {[
+                        { id: 'config:usuarios', label: 'Usuarios' },
+                        { id: 'config:sistema', label: 'Sistema' }
+                      ].map(perm => (
+                        <label key={perm.id} className="flex items-center gap-2 p-3 rounded-xl bg-slate-50 border border-slate-100 cursor-pointer hover:bg-slate-100 transition-all">
+                          <input 
+                            type="checkbox" 
+                            name="permissions" 
+                            value={perm.id} 
+                            defaultChecked={editingUser ? editingUser.permissions.includes(perm.id) : true}
+                            className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500"
+                          />
+                          <span className="text-[10px] font-bold text-slate-600 uppercase tracking-tight">{perm.label}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="space-y-4 pt-4 border-t border-slate-100">
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Sub-Permisos (Mi Panel)</label>
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
                       {[
                         { id: 'mi-panel:perfil', label: 'Perfil' },
                         { id: 'mi-panel:grados', label: 'Grados' },
@@ -7315,9 +8252,53 @@ const App = () => {
                       ))}
                     </div>
                   </div>
-                </>
-              )}
 
+                  <div className="space-y-4 pt-4 border-t border-slate-100">
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Sub-Permisos (Horarios)</label>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                      {[
+                        { id: 'mi-panel:horarios:turnos', label: 'Turnos' },
+                        { id: 'mi-panel:horarios:config', label: 'Config' },
+                        { id: 'mi-panel:horarios:creador', label: 'Creador' },
+                        { id: 'mi-panel:horarios:materias', label: 'Materias' }
+                      ].map(perm => (
+                        <label key={perm.id} className="flex items-center gap-2 p-3 rounded-xl bg-slate-50 border border-slate-100 cursor-pointer hover:bg-slate-100 transition-all">
+                          <input 
+                            type="checkbox" 
+                            name="permissions" 
+                            value={perm.id} 
+                            defaultChecked={editingUser ? editingUser.permissions.includes(perm.id) : true}
+                            className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500"
+                          />
+                          <span className="text-[10px] font-bold text-slate-600 uppercase tracking-tight">{perm.label}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="space-y-4 pt-4 border-t border-slate-100">
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Sub-Permisos (Grados)</label>
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                      {[
+                        { id: 'mi-panel:grados:niveles', label: 'Niveles' },
+                        { id: 'mi-panel:grados:grados', label: 'Grados' },
+                        { id: 'mi-panel:grados:secciones', label: 'Secciones' }
+                      ].map(perm => (
+                        <label key={perm.id} className="flex items-center gap-2 p-3 rounded-xl bg-slate-50 border border-slate-100 cursor-pointer hover:bg-slate-100 transition-all">
+                          <input 
+                            type="checkbox" 
+                            name="permissions" 
+                            value={perm.id} 
+                            defaultChecked={editingUser ? editingUser.permissions.includes(perm.id) : true}
+                            className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500"
+                          />
+                          <span className="text-[10px] font-bold text-slate-600 uppercase tracking-tight">{perm.label}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
               <div className="flex gap-3 md:gap-4 pt-4 md:pt-6">
                 <button type="button" onClick={() => setIsUserModalOpen(false)} className="flex-1 py-3 md:py-4 rounded-xl md:rounded-2xl border-2 border-slate-100 text-slate-400 font-black hover:bg-slate-50 uppercase tracking-widest text-[10px] md:text-xs transition-all">Cancelar</button>
                 <button type="submit" className="flex-1 py-3 md:py-4 rounded-xl md:rounded-2xl bg-blue-600 text-white font-black shadow-xl hover:bg-blue-700 uppercase tracking-widest text-[10px] md:text-xs transition-all">
@@ -7570,7 +8551,7 @@ const App = () => {
                       if(exists) {
                         setCourses(courses.map(c => c.id === editingCourse.id ? editingCourse : c));
                       } else {
-                        setCourses([...courses, editingCourse]);
+                        setCourses([...courses, { ...editingCourse, ownerId: currentUser?.parentId || currentUser?.id || 'admin-1' }]);
                       }
                       setEditingCourse(null);
                       setToast({ message: "Materia guardada", type: 'success' });
@@ -7900,6 +8881,131 @@ const App = () => {
               </div>
               <button type="submit" className="w-full py-4 bg-rose-600 text-white rounded-2xl font-black uppercase tracking-widest text-xs shadow-xl hover:bg-rose-700 transition-all">Registrar Demérito</button>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Enrollment Edit Modal */}
+      {editingEnrollment && (
+        <div className="fixed inset-0 z-[400] flex items-center justify-center p-6 bg-slate-950/80 backdrop-blur-xl animate-fade-in">
+          <div className="bg-white rounded-[3rem] shadow-2xl w-full max-w-2xl overflow-hidden animate-slide-up">
+            <div className="p-8 border-b border-slate-100 flex justify-between items-center bg-blue-600 text-white">
+              <div>
+                <h2 className="text-xl font-black uppercase tracking-widest">Editar Matrícula #{editingEnrollment.receiptNumber}</h2>
+                <p className="text-blue-100 text-[9px] font-bold uppercase mt-1">Modifique los datos de la inscripción</p>
+              </div>
+              <button onClick={() => setEditingEnrollment(null)} className="hover:bg-white/20 p-2 rounded-full transition-all"><X size={20} /></button>
+            </div>
+            <form onSubmit={handleUpdateEnrollment} className="p-8 space-y-6 max-h-[70vh] overflow-y-auto custom-scrollbar">
+              <div className="grid grid-cols-2 gap-6">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Tipo de Pago</label>
+                  <select name="paymentType" defaultValue={editingEnrollment.paymentType} className="w-full p-4 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-bold outline-none transition-all">
+                    <option value="contado">Al Contado</option>
+                    <option value="cuotas">A Cuotas</option>
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Tipo de Beca</label>
+                  <select name="scholarshipType" defaultValue={editingEnrollment.scholarshipType} className="w-full p-4 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-bold outline-none transition-all">
+                    <option value="ninguna">Ninguna</option>
+                    <option value="media">Media Beca</option>
+                    <option value="completa">Beca Completa</option>
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Monto Pensión (S/)</label>
+                  <input name="totalAmount" type="number" defaultValue={editingEnrollment.totalAmount} className="w-full p-4 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-bold outline-none transition-all" />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Monto Materiales (S/)</label>
+                  <input name="materialsAmount" type="number" defaultValue={editingEnrollment.materialsAmount} className="w-full p-4 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-bold outline-none transition-all" />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Fecha Inicio Clases</label>
+                  <input name="classStartDate" type="date" defaultValue={editingEnrollment.classStartDate} className="w-full p-4 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-bold outline-none transition-all" />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">N° Cuotas</label>
+                  <input name="installmentsCount" type="number" defaultValue={editingEnrollment.installmentsCount} className="w-full p-4 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-bold outline-none transition-all" />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Pago Inicial (S/)</label>
+                  <input name="firstInstallment" type="number" defaultValue={editingEnrollment.firstInstallment} className="w-full p-4 rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-bold outline-none transition-all" />
+                </div>
+              </div>
+              <button type="submit" className="w-full py-5 bg-blue-600 text-white rounded-2xl font-black uppercase tracking-widest text-xs shadow-xl hover:bg-blue-700 transition-all">Guardar Cambios</button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Enrollment Preview Modal */}
+      {viewingEnrollment && (
+        <div className="fixed inset-0 z-[400] flex items-center justify-center p-6 bg-slate-950/80 backdrop-blur-xl animate-fade-in">
+          <div className="bg-white rounded-[3rem] shadow-2xl w-full max-w-xl overflow-hidden animate-slide-up">
+            <div className="p-8 border-b border-slate-100 flex justify-between items-center bg-slate-900 text-white">
+              <div>
+                <h2 className="text-xl font-black uppercase tracking-widest">Vista Previa de Boleta</h2>
+                <p className="text-slate-400 text-[9px] font-bold uppercase mt-1">Visualización del recibo generado</p>
+              </div>
+              <button onClick={() => setViewingEnrollment(null)} className="hover:bg-white/20 p-2 rounded-full transition-all"><X size={20} /></button>
+            </div>
+            <div className="p-8 space-y-6">
+              <div className="bg-slate-50 p-8 rounded-[2rem] border border-slate-100 space-y-4">
+                <div className="flex justify-between items-start">
+                  <div>
+                    <h3 className="text-2xl font-black text-slate-800 uppercase tracking-tight">{activeConfig.siteName}</h3>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{activeConfig.slogan}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-xs font-black text-blue-600 uppercase">Boleta #{viewingEnrollment.receiptNumber}</p>
+                    <p className="text-[9px] font-bold text-slate-400 uppercase">{viewingEnrollment.date}</p>
+                  </div>
+                </div>
+                
+                <div className="pt-6 border-t border-slate-200">
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Estudiante</p>
+                  <p className="text-lg font-black text-slate-800 uppercase">{viewingEnrollment.studentName}</p>
+                  <p className="text-xs font-bold text-slate-500">DNI: {viewingEnrollment.studentDni}</p>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4 pt-4">
+                  <div className="p-4 bg-white rounded-2xl border border-slate-100">
+                    <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Tipo de Pago</p>
+                    <p className="text-xs font-black text-slate-700 uppercase">{viewingEnrollment.paymentType}</p>
+                  </div>
+                  <div className="p-4 bg-white rounded-2xl border border-slate-100">
+                    <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Beca</p>
+                    <p className="text-xs font-black text-slate-700 uppercase">{viewingEnrollment.scholarshipType}</p>
+                  </div>
+                </div>
+
+                <div className="pt-6 border-t border-slate-200 flex justify-between items-center">
+                  <p className="text-sm font-black text-slate-800 uppercase">Total Pagado</p>
+                  <p className="text-2xl font-black text-blue-600">S/ {
+                    viewingEnrollment.scholarshipType === 'completa' ? viewingEnrollment.materialsAmount : 
+                    viewingEnrollment.scholarshipType === 'media' ? (viewingEnrollment.totalAmount / 2) + (viewingEnrollment.materialsAmount || 0) : 
+                    viewingEnrollment.totalAmount + (viewingEnrollment.materialsAmount || 0)
+                  }</p>
+                </div>
+              </div>
+              
+              <div className="flex gap-4">
+                <button 
+                  onClick={() => generateEnrollmentPDF(viewingEnrollment)}
+                  className="flex-1 py-4 bg-blue-600 text-white rounded-2xl font-black uppercase tracking-widest text-xs shadow-xl hover:bg-blue-700 transition-all flex items-center justify-center gap-2"
+                >
+                  <Download size={18} /> Descargar PDF
+                </button>
+                <button 
+                  onClick={() => setViewingEnrollment(null)}
+                  className="flex-1 py-4 bg-slate-100 text-slate-600 rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-slate-200 transition-all"
+                >
+                  Cerrar
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

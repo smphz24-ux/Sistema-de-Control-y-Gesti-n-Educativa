@@ -32,6 +32,8 @@ export interface UserConfig {
   meritCategories?: MeritCategory[];
   demeritCategories?: DemeritCategory[];
   periods?: Period[];
+  examTypes?: ExamType[];
+  sections?: string[];
   footerText?: string;
   credentialConfig?: CredentialConfig;
 }
@@ -48,10 +50,33 @@ export interface AppUser {
   config?: UserConfig;
   parentId?: string;
   studentId?: string;
+  linkedUserId?: string;
+  hasOwnDatabase?: boolean;
+}
+
+export interface Enrollment {
+  id: string;
+  ownerId: string;
+  studentId: string;
+  studentName: string;
+  studentDni: string;
+  paymentType: 'contado' | 'cuotas';
+  scholarshipType: 'ninguna' | 'media' | 'completa';
+  totalAmount: number;
+  firstInstallment?: number;
+  materialsAmount?: number;
+  date: string;
+  receiptNumber: string;
+  attendedBy: string;
+  status: 'pagado' | 'pendiente';
+  installmentsCount?: number;
+  classStartDate?: string;
+  paymentMethod?: 'efectivo' | 'transferencia' | 'billetera';
 }
 
 export interface Student {
   id: string;
+  ownerId: string;
   nombre: string;
   apellido: string;
   dni: string;
@@ -69,6 +94,9 @@ export interface Student {
   logo?: string; // base64 logo override
   primaryColor?: string;
   secondaryColor?: string;
+  schoolName?: string;
+  studentPhone?: string;
+  registrationDate?: string;
 }
 
 export interface ConsultationLog {
@@ -85,6 +113,7 @@ export type AttendanceStatus = 'entrada' | 'tardanza' | 'ausente' | 'salida' | '
 
 export interface Attendance {
   id: string;
+  ownerId: string;
   studentDni: string;
   studentId: string;
   studentName: string;
@@ -98,6 +127,7 @@ export interface Attendance {
 
 export interface Grade {
   id: string;
+  ownerId: string;
   studentId: string;
   studentName: string;
   materia: string;
@@ -115,6 +145,7 @@ export interface Grade {
   numQuestions?: number;
   isIndispensable?: boolean;
   divisor?: number;
+  rawScore?: number;
 }
 
 export interface ExamType {
@@ -131,11 +162,13 @@ export interface ExamType {
 
 export interface Level {
   id: string;
+  ownerId: string;
   nombre: string;
 }
 
 export interface GradeLevel {
   id: string;
+  ownerId: string;
   nombre: string;
   nivelId: string;
   seccion: string;
@@ -143,6 +176,7 @@ export interface GradeLevel {
 
 export interface Shift {
   id: string;
+  ownerId: string;
   nombre: string;
   entradaMañana: string;
   salidaMañana: string;
@@ -152,6 +186,7 @@ export interface Shift {
 
 export interface Schedule {
   id: string;
+  ownerId: string;
   targetId: string; // GradeLevel ID or Teacher ID
   type: 'clase' | 'laboral';
   dia: 'Lunes' | 'Martes' | 'Miércoles' | 'Jueves' | 'Viernes' | 'Sábado' | 'Domingo';
@@ -165,6 +200,7 @@ export type IncidenceStatus = 'registrada' | 'en evaluación' | 'en seguimiento'
 
 export interface Incidence {
   id: string;
+  ownerId: string;
   studentId: string;
   studentName: string;
   studentDni: string;
@@ -205,6 +241,7 @@ export interface DemeritCategory {
 
 export interface ConductAction {
   id: string;
+  ownerId: string;
   studentId: string;
   type: 'merit' | 'demerit';
   categoryName: string;
@@ -219,6 +256,7 @@ export type AppConfig = UserConfig;
 
 export interface Course {
   id: string;
+  ownerId: string;
   nombre: string;
   nivelId: string;
 }

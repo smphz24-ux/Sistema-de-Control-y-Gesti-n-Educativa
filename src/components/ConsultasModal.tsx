@@ -141,10 +141,27 @@ const ConsultasModal: React.FC<ConsultasModalProps> = ({
   const studentGrades = grades.filter(g => g.studentId === consultasResult.id);
 
   // Filter courses to only those relevant to the student's grade or those they have grades for
-  const relevantCourses = courses.filter(c => 
+  const baseRelevantCourses = courses.filter(c => 
     studentSchedules.some(s => s.materia === c.name) || 
     studentGrades.some(g => g.materia.startsWith(c.name))
   );
+
+  // Add virtual courses for each unique examType found in grades with materia "Examen"
+  const examTypesInGrades = Array.from(new Set(
+    studentGrades
+      .filter(g => g.materia === "Examen")
+      .map(g => g.examType)
+  )).filter(Boolean);
+
+  const relevantCourses = [
+    ...baseRelevantCourses,
+    ...examTypesInGrades.map(type => ({
+      id: `exam-${type}`,
+      name: type,
+      color: '#6366f1', // Indigo for exams
+      isExam: true
+    }))
+  ];
   return (
     <div className={`fixed inset-0 z-[100] flex items-center justify-center p-2 md:p-10 bg-slate-950/90 backdrop-blur-xl animate-fade-in ${isFullScreen ? 'z-[200]' : ''}`}>
       <div className={`bg-white rounded-[2rem] md:rounded-[3rem] shadow-2xl w-full max-w-5xl h-full max-h-[95vh] md:max-h-[90vh] overflow-hidden flex flex-col animate-slide-up relative ${isFullScreen ? 'max-w-full max-h-full rounded-none' : ''}`}>
@@ -454,7 +471,9 @@ const ConsultasModal: React.FC<ConsultasModalProps> = ({
                   {relevantCourses
                     .filter(c => !selectedCourseId || c.id === selectedCourseId)
                     .map(course => {
-                      const courseGrades = studentGrades.filter(g => g.materia.startsWith(course.name));
+                      const courseGrades = (course as any).isExam 
+                        ? studentGrades.filter(g => g.materia === "Examen" && g.examType === course.name)
+                        : studentGrades.filter(g => g.materia.startsWith(course.name));
                       const avg = courseGrades.length > 0 ? courseGrades.reduce((a, b) => a + b.nota, 0) / courseGrades.length : 0;
                       
                       return (
@@ -486,7 +505,12 @@ const ConsultasModal: React.FC<ConsultasModalProps> = ({
                                       <FileText size={14} className="text-slate-300" />
                                       <div className="flex flex-col">
                                         <p className="text-[10px] font-black text-slate-800 uppercase tracking-tight">{g.examType || 'Nota'}</p>
-                                        <p className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">{g.periodo || 'Periodo'}</p>
+                                        <div className="flex gap-2">
+                                          <span className="text-[7px] font-black text-emerald-600 uppercase tracking-widest">B: {g.buenas || 0}</span>
+                                          <span className="text-[7px] font-black text-rose-600 uppercase tracking-widest">M: {g.malas || 0}</span>
+                                          <span className="text-[7px] font-black text-slate-400 uppercase tracking-widest">Bl: {g.blancas || 0}</span>
+                                          <span className="text-[7px] font-black text-blue-500 uppercase tracking-widest ml-1">Pts: {g.rawScore?.toFixed(1) || '-'}</span>
+                                        </div>
                                       </div>
                                     </div>
                                     <div className="flex items-center gap-3">
