@@ -3615,7 +3615,7 @@ const App = () => {
 
   const navItems = [
     { id: "dashboard", icon: LayoutDashboard, label: "Dashboard" },
-    { id: "estudiantes", icon: Database, label: "Base de Datos" },
+    { id: "estudiantes", icon: Database, label: "Registro General" },
     { id: "asistencia", icon: CalendarCheck, label: "Asistencia" },
     { id: "reportes", icon: FileText, label: "Reportes" },
     { id: "matricula", icon: FileSpreadsheet, label: "Matrícula" },
@@ -5059,7 +5059,7 @@ const App = () => {
                           {activeConfig.siteName}
                         </h2>
                         <p className="text-slate-500 text-xs font-medium">
-                          Base de Datos Institucional - Personal y alumnado.
+                          Registro General Institucional - Personal y alumnado.
                         </p>
                       </div>
                       <button
