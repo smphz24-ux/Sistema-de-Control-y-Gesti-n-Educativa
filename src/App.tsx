@@ -96,6 +96,7 @@ import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 import jsQR from "jsqr";
 import { BrowserMultiFormatReader, BrowserCodeReader } from "@zxing/browser";
+import { supabase } from "./lib/supabase";
 
 import {
   AppUser,
@@ -588,61 +589,83 @@ const App = () => {
   const [publicSearchOwnerId, setPublicSearchOwnerId] = useState<string | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
 
-  // --- Real-time Sync via WebSockets ---
+  // --- Real-time Sync via Supabase ---
   useEffect(() => {
+    if (!supabase) return;
     const ownerId = currentUser ? getOwnerId(currentUser) : publicSearchOwnerId;
     if (!ownerId) return;
 
-    // Connect to WebSocket server
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const socket = new WebSocket(`${protocol}//${window.location.host}`);
-    socketRef.current = socket;
-
-    socket.onopen = () => {
-      console.log('Connected to real-time server');
-      // Join the room for the specific owner
-      socket.send(JSON.stringify({ type: 'join', ownerId }));
-    };
-
-    socket.onmessage = (event) => {
-      try {
-        const message = JSON.parse(event.data);
-        if (message.type === 'update' && message.data) {
-          isRemoteUpdate.current = true;
-          const data = message.data;
-          if (data.students) setStudents(data.students);
-          if (data.grades) setGrades(data.grades);
-          if (data.attendance) setAttendance(data.attendance);
-          if (data.incidences) setIncidences(data.incidences);
-          if (data.courses) setCourses(data.courses);
-          if (data.gradeLevels) setGradeLevels(data.gradeLevels);
-          if (data.schedules) setSchedules(data.schedules);
-          if (data.shifts) setShifts(data.shifts);
-          if (data.consultationLogs) setConsultationLogs(data.consultationLogs);
-          if (data.conductActions) setConductActions(data.conductActions);
-          if (data.examTypes) setExamTypes(data.examTypes);
-          setTimeout(() => isRemoteUpdate.current = false, 500);
-        } else if (message.type === 'config_update' && message.data) {
-          isRemoteUpdate.current = true;
-          setGlobalConfig(message.data);
-          setTimeout(() => isRemoteUpdate.current = false, 500);
-        } else if (message.type === 'users_update' && message.data) {
-          isRemoteUpdate.current = true;
-          setUsers(message.data);
-          setTimeout(() => isRemoteUpdate.current = false, 500);
+    // Subscribe to changes in app_data for the specific owner
+    const appDataSubscription = supabase
+      .channel('app_data_changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'app_data',
+          filter: `owner_id=eq.${ownerId}`,
+        },
+        (payload) => {
+          if (payload.new) {
+            isRemoteUpdate.current = true;
+            const data = (payload.new as any).data;
+            if (data.students) setStudents(data.students);
+            if (data.grades) setGrades(data.grades);
+            if (data.attendance) setAttendance(data.attendance);
+            if (data.incidences) setIncidences(data.incidences);
+            if (data.courses) setCourses(data.courses);
+            if (data.gradeLevels) setGradeLevels(data.gradeLevels);
+            if (data.schedules) setSchedules(data.schedules);
+            if (data.shifts) setShifts(data.shifts);
+            if (data.consultationLogs) setConsultationLogs(data.consultationLogs);
+            if (data.conductActions) setConductActions(data.conductActions);
+            if (data.examTypes) setExamTypes(data.examTypes);
+            setTimeout(() => (isRemoteUpdate.current = false), 500);
+          }
         }
-      } catch (err) {
-        console.error('Error processing real-time message:', err);
-      }
-    };
+      )
+      .subscribe();
 
-    socket.onclose = () => {
-      console.log('Disconnected from real-time server');
-    };
+    // Subscribe to configs
+    const configSubscription = supabase
+      .channel('config_changes')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'configs' },
+        (payload) => {
+          if (payload.new) {
+            isRemoteUpdate.current = true;
+            setGlobalConfig((payload.new as any).config);
+            setTimeout(() => (isRemoteUpdate.current = false), 500);
+          }
+        }
+      )
+      .subscribe();
+
+    // Subscribe to users
+    const usersSubscription = supabase
+      .channel('users_changes')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'users' },
+        (payload) => {
+          // This is a bit simplified, but would work if fetchUsers matches
+          api.fetchUsers().then(newUsers => {
+            if (newUsers) {
+              isRemoteUpdate.current = true;
+              setUsers(newUsers);
+              setTimeout(() => (isRemoteUpdate.current = false), 500);
+            }
+          });
+        }
+      )
+      .subscribe();
 
     return () => {
-      socket.close();
-      socketRef.current = null;
+      supabase.removeChannel(appDataSubscription);
+      supabase.removeChannel(configSubscription);
+      supabase.removeChannel(usersSubscription);
     };
   }, [currentUser, publicSearchOwnerId]);
 
@@ -1675,16 +1698,7 @@ const App = () => {
       
       Brinda 3 consejos estratégicos para mejorar el rendimiento escolar.`;
 
-      const response = await fetch("/api/ai/report", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt }),
-      });
-
-      const data = await response.json();
-      if (!response.ok)
-        throw new Error(data.error || "Error al generar reporte");
-
+      const data = await api.generateAIReport(prompt);
       setAiReport(data.text);
     } catch (e) {
       console.error("AI report error:", e);
