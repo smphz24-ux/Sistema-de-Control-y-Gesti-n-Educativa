@@ -5,7 +5,10 @@ const fetchWithRetry = async (url: string, options?: RequestInit, retries = 5, b
   for (let i = 0; i < retries; i++) {
     try {
       const res = await fetch(url, options);
-      if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+      if (!res.ok) {
+        if (res.status === 404) return null;
+        throw new Error(`HTTP error! status: ${res.status}`);
+      }
       const contentType = res.headers.get("content-type");
       if (contentType && contentType.includes("application/json")) {
         return await res.json();
@@ -46,6 +49,18 @@ export const saveUsers = async (users: AppUser[]) => {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(users)
+  });
+};
+
+export const fetchPublicSearch = async (dni: string) => {
+  return fetchWithRetry(`/api/public/search/${dni}`);
+};
+
+export const savePublicGrade = async (ownerId: string, grade: Grade) => {
+  return fetchWithRetry('/api/public/save-grade', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ownerId, grade })
   });
 };
 

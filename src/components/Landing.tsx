@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { GraduationCap, Search, Lock, X, Keyboard, User, QrCode, Clock, LogIn, LogOut, ArrowLeft } from 'lucide-react';
+import { GraduationCap, Search, Lock, X, Keyboard, User, QrCode, Clock, LogIn, LogOut, ArrowLeft, Camera, UserCheck } from 'lucide-react';
 import { AppConfig } from '../types';
 import jsQR from 'jsqr';
 import { motion, AnimatePresence } from 'motion/react';
@@ -25,8 +25,8 @@ const Landing: React.FC<LandingProps> = ({ globalConfig, onConsultasSearch, onAd
   const [asistenciaType, setAsistenciaType] = useState<'entrada' | 'salida' | 'tardanza'>('entrada');
   const [isScanning, setIsScanning] = useState(false);
 
-  const pub = globalConfig.publicModules || { attendance: true, alerts: true, schedule: true, grades: true };
-  const isConsultasEnabled = pub.attendance || pub.alerts || pub.schedule || pub.grades;
+  const pub = globalConfig.publicModules || { attendance: true, alerts: true, schedule: true, grades: true, exams: true };
+  const isConsultasEnabled = pub.attendance || pub.alerts || pub.schedule || pub.grades || pub.exams !== false;
 
   useEffect(() => {
     if (consultasSearchDni.length === 8) {
@@ -74,25 +74,25 @@ const Landing: React.FC<LandingProps> = ({ globalConfig, onConsultasSearch, onAd
   }, [onMarkAttendance, asistenciaType]);
 
   return (
-    <div className="min-h-full w-full flex flex-col items-center justify-center p-4 md:p-6 relative overflow-hidden" style={{ fontFamily: globalConfig.theme.fontFamily, background: `linear-gradient(135deg, ${globalConfig.theme.primaryColor}10 0%, ${globalConfig.theme.secondaryColor}10 100%)` }}>
+    <div className="min-h-screen w-full flex flex-col items-center justify-center p-4 relative overflow-hidden" style={{ fontFamily: globalConfig.theme?.fontFamily || 'sans-serif', background: `linear-gradient(135deg, ${globalConfig.theme?.primaryColor || '#1e3a8a'}10 0%, ${globalConfig.theme?.secondaryColor || '#3b82f6'}10 100%)` }}>
       {/* Decorative background elements */}
-      <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] rounded-full blur-[80px] md:blur-[120px] animate-pulse opacity-20" style={{ backgroundColor: globalConfig.theme.primaryColor }}></div>
-      <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] rounded-full blur-[80px] md:blur-[120px] animate-pulse delay-700 opacity-20" style={{ backgroundColor: globalConfig.theme.secondaryColor }}></div>
+      <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] rounded-full blur-[80px] md:blur-[120px] animate-pulse opacity-20" style={{ backgroundColor: globalConfig.theme?.primaryColor || '#1e3a8a' }}></div>
+      <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] rounded-full blur-[80px] md:blur-[120px] animate-pulse delay-700 opacity-20" style={{ backgroundColor: globalConfig.theme?.secondaryColor || '#3b82f6' }}></div>
 
-      <div className="max-w-4xl w-full space-y-8 md:space-y-12 text-center relative z-10 flex flex-col items-center">
-        <div className="space-y-4 animate-slide-up w-full">
-          <div className="w-20 h-20 md:w-24 md:h-24 rounded-[2rem] md:rounded-[2.5rem] bg-white shadow-2xl border border-slate-100 flex items-center justify-center mx-auto mb-6 md:mb-8 transition-transform hover:scale-110 duration-500">
-            {globalConfig.logo ? <img src={globalConfig.logo} className="w-12 h-12 md:w-16 md:h-16 object-contain" referrerPolicy="no-referrer" /> : <GraduationCap size={40} style={{ color: globalConfig.theme.primaryColor }} />}
+      <div className="max-w-4xl w-full flex flex-col items-center justify-center min-h-[80vh] py-6 md:py-10 relative z-10 text-center px-4">
+        <div className="space-y-4 md:space-y-6 animate-slide-up w-full max-w-lg mb-8 md:mb-12">
+          <div className="w-20 h-20 md:w-32 md:h-32 rounded-[2rem] bg-white shadow-2xl border border-slate-100 flex items-center justify-center mx-auto mb-4 md:mb-6 transition-transform hover:scale-110 duration-500">
+            {globalConfig.logo ? <img src={globalConfig.logo} className="w-12 h-12 md:w-20 md:h-20 object-contain" referrerPolicy="no-referrer" /> : <GraduationCap size={40} md:size={48} style={{ color: globalConfig.theme?.primaryColor || '#1e3a8a' }} />}
           </div>
-          <h1 className="text-3xl md:text-5xl lg:text-6xl font-black text-slate-900 tracking-tighter uppercase leading-none px-4">
+          <h1 className="text-3xl md:text-6xl font-black text-slate-900 tracking-tighter uppercase leading-none">
             {globalConfig.siteName}
           </h1>
-          <p className="text-slate-400 font-bold uppercase tracking-[0.2em] md:tracking-[0.3em] text-[8px] md:text-[10px]">
+          <p className="text-slate-400 font-bold uppercase tracking-[0.2em] text-[9px] md:text-[12px]">
             {globalConfig.slogan || "Educación con Valores y Tecnología"}
           </p>
         </div>
 
-        <div className="space-y-6 md:space-y-8 animate-slide-up delay-150 w-full max-w-2xl px-4">
+        <div className="space-y-6 md:space-y-8 animate-slide-up delay-150 w-full max-w-2xl">
           <div className={`grid gap-4 md:gap-6 ${isConsultasEnabled ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1'}`}>
             <AnimatePresence mode="popLayout">
               {isConsultasEnabled && (
@@ -103,13 +103,13 @@ const Landing: React.FC<LandingProps> = ({ globalConfig, onConsultasSearch, onAd
                   exit={{ opacity: 0, scale: 0.9 }}
                   transition={{ duration: 0.3, ease: "easeOut" }}
                   onClick={() => setIsDniInputModalOpen(true)}
-                  className="w-full py-6 md:py-10 bg-white border-2 border-slate-100 rounded-[2rem] md:rounded-[3rem] shadow-2xl hover:shadow-blue-200/50 hover:border-blue-200 transition-all group relative overflow-hidden flex flex-col items-center justify-center"
+                  className="w-full py-6 md:py-8 bg-white border-2 border-slate-100 rounded-[2rem] md:rounded-[2.5rem] shadow-xl hover:shadow-blue-200/50 hover:border-blue-200 transition-all group relative overflow-hidden flex flex-col items-center justify-center gap-1 md:gap-2"
                 >
                   <div className="absolute inset-0 bg-gradient-to-br from-blue-50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
-                  <div className="relative z-10 flex flex-col items-center gap-1 md:gap-2 px-4">
-                    <Search size={28} md:size={40} style={{ color: globalConfig.theme.primaryColor }} className="mb-1 md:mb-2" />
-                    <span className="text-xl md:text-4xl font-black text-slate-800 tracking-tight uppercase leading-tight">Consultas</span>
-                    <span className="text-[7px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest">Acceso Público</span>
+                  <div className="relative z-10 flex flex-col items-center gap-1">
+                    <Search size={28} md:size={32} style={{ color: globalConfig.theme?.primaryColor || '#1e3a8a' }} />
+                    <span className="text-xl md:text-2xl font-black text-slate-800 tracking-tight uppercase">Consultas</span>
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Acceso Público</span>
                   </div>
                 </motion.button>
               )}
@@ -118,37 +118,37 @@ const Landing: React.FC<LandingProps> = ({ globalConfig, onConsultasSearch, onAd
                 key="asistencia-btn"
                 layout
                 onClick={() => setIsPasswordModalOpen(true)}
-                className="w-full py-6 md:py-10 bg-white border-2 border-slate-100 rounded-[2rem] md:rounded-[3rem] shadow-2xl hover:shadow-emerald-200/50 hover:border-emerald-200 transition-all group relative overflow-hidden flex flex-col items-center justify-center"
+                className="w-full py-6 md:py-8 bg-white border-2 border-slate-100 rounded-[2rem] md:rounded-[2.5rem] shadow-xl hover:shadow-emerald-200/50 hover:border-emerald-200 transition-all group relative overflow-hidden flex flex-col items-center justify-center gap-1 md:gap-2"
               >
                 <div className="absolute inset-0 bg-gradient-to-br from-emerald-50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
-                <div className="relative z-10 flex flex-col items-center gap-1 md:gap-2 px-4">
-                  <Clock size={28} md:size={40} className="text-emerald-600 mb-1 md:mb-2" />
-                  <span className="text-xl md:text-4xl font-black text-slate-800 tracking-tight uppercase leading-tight">Asistencia<br/>Rápida</span>
-                  <span className="text-[7px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest">Registro Rápido</span>
+                <div className="relative z-10 flex flex-col items-center gap-1">
+                  <Clock size={28} md:size={32} className="text-emerald-600" />
+                  <span className="text-xl md:text-2xl font-black text-slate-800 tracking-tight uppercase">Asistencia</span>
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Registro Rápido</span>
                 </div>
               </motion.button>
             </AnimatePresence>
           </div>
 
-          <div className="flex justify-center gap-6 md:gap-8 pt-4">
+          <div className="flex justify-center gap-6 md:gap-8 pt-2 md:pt-4">
             <button 
               onClick={onLogin}
               className="group flex flex-col items-center transition-all hover:scale-105"
             >
-              <div className="w-10 h-10 md:w-12 md:h-12 rounded-xl md:rounded-2xl bg-slate-100 flex items-center justify-center text-slate-400 group-hover:bg-slate-900 group-hover:text-white transition-all shadow-sm">
-                <User size={18} md:size={20} />
+              <div className="w-12 h-12 md:w-14 md:h-14 rounded-xl md:rounded-2xl bg-white shadow-lg border border-slate-100 flex items-center justify-center text-slate-400 group-hover:bg-slate-900 group-hover:text-white transition-all">
+                <User size={20} md:size={24} />
               </div>
-              <span className="text-[8px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mt-2 group-hover:text-slate-900 transition-all">Ingresar</span>
+              <span className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1.5 md:mt-2 group-hover:text-slate-900 transition-all">Ingresar</span>
             </button>
 
             <button 
               onClick={onAdminLogin}
               className="group flex flex-col items-center transition-all hover:scale-105"
             >
-              <div className="w-10 h-10 md:w-12 md:h-12 rounded-xl md:rounded-2xl bg-slate-100 flex items-center justify-center text-slate-400 group-hover:bg-slate-900 group-hover:text-white transition-all shadow-sm">
-                <Lock size={18} md:size={20} />
+              <div className="w-12 h-12 md:w-14 md:h-14 rounded-xl md:rounded-2xl bg-white shadow-lg border border-slate-100 flex items-center justify-center text-slate-400 group-hover:bg-slate-900 group-hover:text-white transition-all">
+                <Lock size={20} md:size={24} />
               </div>
-              <span className="text-[8px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mt-2 group-hover:text-slate-900 transition-all">Admin</span>
+              <span className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1.5 md:mt-2 group-hover:text-slate-900 transition-all">Admin</span>
             </button>
           </div>
         </div>
@@ -223,7 +223,7 @@ const Landing: React.FC<LandingProps> = ({ globalConfig, onConsultasSearch, onAd
                   />
                 </div>
               </div>
-              <button type="submit" className="w-full py-5 text-white rounded-2xl font-black uppercase tracking-widest text-xs shadow-xl hover:opacity-90 transition-all" style={{ backgroundColor: globalConfig.theme.primaryColor }}>
+              <button type="submit" className="w-full py-5 text-white rounded-2xl font-black uppercase tracking-widest text-xs shadow-xl hover:opacity-90 transition-all" style={{ backgroundColor: globalConfig.theme?.primaryColor || '#1e3a8a' }}>
                 Buscar Estudiante
               </button>
             </form>
@@ -266,39 +266,39 @@ const Landing: React.FC<LandingProps> = ({ globalConfig, onConsultasSearch, onAd
                 <div className="bg-white p-6 md:p-8 rounded-[2rem] md:rounded-[2.5rem] shadow-xl border border-slate-100 space-y-6 md:space-y-8">
                   <div>
                     <h3 className="text-base md:text-lg font-black text-slate-900 uppercase tracking-tight mb-4">1. Seleccione Acción</h3>
-                    <div className="grid grid-cols-3 gap-2 md:gap-3">
+                    <div className="grid grid-cols-3 gap-3 md:gap-5">
                       <button 
                         onClick={() => setAsistenciaType('entrada')}
-                        className={`p-3 md:p-4 rounded-xl md:rounded-2xl border-2 transition-all flex flex-col items-center gap-1 md:gap-2 ${asistenciaType === 'entrada' ? 'bg-emerald-50 border-emerald-500 text-emerald-700' : 'bg-slate-50 border-slate-100 text-slate-400 hover:border-emerald-200'}`}
+                        className={`p-5 md:p-8 rounded-2xl md:rounded-[2rem] border-4 transition-all flex flex-col items-center gap-2 md:gap-4 ${asistenciaType === 'entrada' ? 'bg-emerald-50 border-emerald-500 text-emerald-700 shadow-xl shadow-emerald-100 scale-105' : 'bg-slate-50 border-slate-100 text-slate-400 hover:border-emerald-200'}`}
                       >
-                        <LogIn size={20} md:size={24} />
-                        <span className="text-[8px] md:text-[10px] font-black uppercase tracking-widest">Entrada</span>
+                        <LogIn size={28} className="md:w-10 md:h-10" />
+                        <span className="text-[10px] md:text-xs font-black uppercase tracking-widest">Entrada</span>
                       </button>
                       <button 
                         onClick={() => setAsistenciaType('tardanza')}
-                        className={`p-3 md:p-4 rounded-xl md:rounded-2xl border-2 transition-all flex flex-col items-center gap-1 md:gap-2 ${asistenciaType === 'tardanza' ? 'bg-amber-50 border-amber-500 text-amber-700' : 'bg-slate-50 border-slate-100 text-slate-400 hover:border-amber-200'}`}
+                        className={`p-5 md:p-8 rounded-2xl md:rounded-[2rem] border-4 transition-all flex flex-col items-center gap-2 md:gap-4 ${asistenciaType === 'tardanza' ? 'bg-amber-50 border-amber-500 text-amber-700 shadow-xl shadow-amber-100 scale-105' : 'bg-slate-50 border-slate-100 text-slate-400 hover:border-amber-200'}`}
                       >
-                        <Clock size={20} md:size={24} />
-                        <span className="text-[8px] md:text-[10px] font-black uppercase tracking-widest">Tardanza</span>
+                        <Clock size={28} className="md:w-10 md:h-10" />
+                        <span className="text-[10px] md:text-xs font-black uppercase tracking-widest">Tardanza</span>
                       </button>
                       <button 
                         onClick={() => setAsistenciaType('salida')}
-                        className={`p-3 md:p-4 rounded-xl md:rounded-2xl border-2 transition-all flex flex-col items-center gap-1 md:gap-2 ${asistenciaType === 'salida' ? 'bg-rose-50 border-rose-500 text-rose-700' : 'bg-slate-50 border-slate-100 text-slate-400 hover:border-rose-200'}`}
+                        className={`p-5 md:p-8 rounded-2xl md:rounded-[2rem] border-4 transition-all flex flex-col items-center gap-2 md:gap-4 ${asistenciaType === 'salida' ? 'bg-rose-50 border-rose-500 text-rose-700 shadow-xl shadow-rose-100 scale-105' : 'bg-slate-50 border-slate-100 text-slate-400 hover:border-rose-200'}`}
                       >
-                        <LogOut size={20} md:size={24} />
-                        <span className="text-[8px] md:text-[10px] font-black uppercase tracking-widest">Salida</span>
+                        <LogOut size={28} className="md:w-10 md:h-10" />
+                        <span className="text-[10px] md:text-xs font-black uppercase tracking-widest">Salida</span>
                       </button>
                     </div>
                   </div>
 
                   <div>
                     <h3 className="text-base md:text-lg font-black text-slate-900 uppercase tracking-tight mb-4">2. Identificación</h3>
-                    <form onSubmit={handleAsistenciaSubmit} className="space-y-4">
-                      <div className="relative">
-                        <Keyboard className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} md:size={20} />
+                    <form onSubmit={handleAsistenciaSubmit} className="space-y-6">
+                      <div className="relative group">
+                        <Keyboard className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-500 transition-colors" size={24} />
                         <input 
                           type="text" 
-                          className="w-full pl-12 pr-4 py-4 md:py-5 rounded-xl md:rounded-2xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 font-black text-lg md:text-xl outline-none transition-all"
+                          className="w-full pl-16 pr-6 py-6 md:py-8 rounded-2xl md:rounded-[2.5rem] bg-slate-50 border-4 border-slate-100 focus:border-blue-500 font-black text-2xl md:text-4xl outline-none transition-all shadow-inner placeholder:text-slate-200"
                           placeholder="Ingrese DNI"
                           value={asistenciaDni}
                           onChange={(e) => setAsistenciaDni(e.target.value)}
@@ -306,9 +306,9 @@ const Landing: React.FC<LandingProps> = ({ globalConfig, onConsultasSearch, onAd
                       </div>
                       <button 
                         type="submit"
-                        className="w-full py-4 md:py-5 bg-slate-900 text-white rounded-xl md:rounded-2xl font-black uppercase tracking-widest text-xs md:text-sm shadow-xl hover:bg-slate-800 transition-all"
+                        className="w-full py-6 md:py-8 bg-slate-900 text-white rounded-2xl md:rounded-[2.5rem] font-black uppercase tracking-[0.3em] text-sm md:text-lg shadow-2xl hover:bg-black transition-all transform hover:scale-[1.02] active:scale-95 flex items-center justify-center gap-4"
                       >
-                        Registrar Asistencia
+                        <UserCheck size={24} /> Registrar Asistencia
                       </button>
                     </form>
                   </div>
@@ -345,12 +345,12 @@ const Landing: React.FC<LandingProps> = ({ globalConfig, onConsultasSearch, onAd
                     ) : (
                       <button 
                         onClick={() => setIsScanning(true)}
-                        className="w-full h-full flex flex-col items-center justify-center gap-3 md:gap-4 text-white/40 hover:text-white transition-all group"
+                        className="w-full h-full flex flex-col items-center justify-center gap-6 text-white group"
                       >
-                        <div className="w-14 h-14 md:w-16 md:h-16 rounded-full bg-white/5 flex items-center justify-center group-hover:scale-110 transition-transform">
-                          <LogIn size={28} md:size={32} />
+                        <div className="w-24 h-24 md:w-32 md:h-32 rounded-full bg-white/10 flex items-center justify-center group-hover:scale-110 transition-transform shadow-2xl backdrop-blur-md border-2 border-white/20">
+                          <Camera size={40} md:size={56} className="text-blue-400 group-hover:text-white transition-colors" />
                         </div>
-                        <span className="text-[8px] md:text-[10px] font-black uppercase tracking-widest">Activar Cámara</span>
+                        <span className="text-[10px] md:text-sm font-black uppercase tracking-[0.4em] text-slate-300 group-hover:text-white transition-colors">Activar Cámara Escáner</span>
                       </button>
                     )}
                     

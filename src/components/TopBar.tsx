@@ -4,11 +4,15 @@ import { Menu, Settings } from 'lucide-react';
 interface TopBarProps {
   activeTab: string;
   setIsMobileMenuOpen: (open: boolean) => void;
+  activeConfig?: any;
+  isMobileMenuOpen?: boolean;
 }
 
 const TopBar: React.FC<TopBarProps> = ({
   activeTab,
-  setIsMobileMenuOpen
+  setIsMobileMenuOpen,
+  activeConfig,
+  isMobileMenuOpen
 }) => {
   return (
     <header 

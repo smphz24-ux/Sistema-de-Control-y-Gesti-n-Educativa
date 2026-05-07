@@ -1,7 +1,7 @@
 
 import React, { useState, useRef, useCallback } from 'react';
-import { X, User, Download, Calendar, FileText, ShieldCheck, Award, Info, Printer } from 'lucide-react';
-import { Student, UserConfig, Attendance, Course, Schedule, TimeSlot, ConsultationLog, ConductAction, Grade } from '../types';
+import { X, User, Download, Calendar, FileText, ShieldCheck, Award, Info, Printer, Layers, AlertCircle, CalendarCheck } from 'lucide-react';
+import { Student, UserConfig, Attendance, Course, Schedule, TimeSlot, ConsultationLog, ConductAction, Grade, ExamType } from '../types';
 import * as htmlToImage from 'html-to-image';
 
 interface ConsultasModalProps {
@@ -17,19 +17,67 @@ interface ConsultasModalProps {
   pub: any;
   conductActions: ConductAction[];
   grades: Grade[];
+  examTypes: ExamType[];
   schoolDays?: string[];
   gradeLevels?: any[];
   students?: Student[];
+  onSaveGrade?: (grade: Partial<Grade>) => void;
 }
 
 const ConsultasModal: React.FC<ConsultasModalProps> = ({ 
   consultasResult, globalConfig, activeConsultasTab, setActiveConsultasTab, 
   onClose, attendance, courses, schedules, timeSlots, pub, conductActions, grades,
-  schoolDays, gradeLevels, students
+  examTypes, schoolDays, gradeLevels, students, onSaveGrade
 }) => {
+  const safePub = { 
+    attendance: true, 
+    alerts: true, 
+    schedule: true, 
+    grades: true, 
+    exams: true, 
+    opticalSheetEnabled: false,
+    ...pub 
+  };
   const [selectedCourseId, setSelectedCourseId] = useState<string | null>(null);
+  const [selectedGradeId, setSelectedGradeId] = useState<string | null>(null);
   const [isFullScreen, setIsFullScreen] = useState(false);
+  const [selectedExamForSheet, setSelectedExamForSheet] = useState<ExamType | null>(null);
+  const [studentAnswersForSheet, setStudentAnswersForSheet] = useState<Record<number, string>>({});
+  const [examResult, setExamResult] = useState<{ buenas: number; malas: number; blancas: number; total: number } | null>(null);
+  const [justSubmitted, setJustSubmitted] = useState(false);
+  const [timeLeft, setTimeLeft] = useState<number | null>(null);
+  const [isTimerActive, setIsTimerActive] = useState(false);
   const scheduleRef = useRef<HTMLDivElement>(null);
+
+  // Auto-select first available tab if current one is disabled
+  React.useEffect(() => {
+    const isTabEnabled = (tab: string) => {
+      switch (tab) {
+        case 'asistencia': return !!safePub.attendance;
+        case 'alerta': return !!safePub.alerts;
+        case 'horario': return !!safePub.schedule;
+        case 'notas': return !!safePub.grades;
+        case 'examenes': return safePub.exams !== false; // Default true
+        case 'ficha_optica': return !!safePub.opticalSheetEnabled;
+        default: return true;
+      }
+    };
+
+    if (!isTabEnabled(activeConsultasTab)) {
+      if (safePub.attendance) setActiveConsultasTab('asistencia');
+      else if (safePub.alerts) setActiveConsultasTab('alerta');
+      else if (safePub.schedule) setActiveConsultasTab('horario');
+      else if (safePub.grades) setActiveConsultasTab('notas');
+      else if (safePub.exams !== false) setActiveConsultasTab('examenes');
+      else if (safePub.opticalSheetEnabled) setActiveConsultasTab('ficha_optica');
+    }
+  }, [safePub, activeConsultasTab, setActiveConsultasTab]);
+
+  // Reset selectedGradeId when course changes
+  const handleCourseSelect = (courseId: string | null) => {
+    setSelectedCourseId(courseId);
+    setSelectedGradeId(null);
+  };
 
   const downloadSchedule = useCallback(async () => {
     if (scheduleRef.current) {
@@ -117,6 +165,63 @@ const ConsultasModal: React.FC<ConsultasModalProps> = ({
   // Find the GradeLevel ID for the student to match schedules correctly
   const studentGradeLevel = gradeLevels?.find(gl => gl.nombre === consultasResult.grado && gl.seccion === consultasResult.seccion);
   
+  const handleSubmit = useCallback(() => {
+    if (!selectedExamForSheet || examResult) return;
+    
+    const examQuestions = selectedExamForSheet.numQuestions || 0;
+    const buenas = examQuestions ? Array.from({ length: examQuestions }).filter((_, i) => studentAnswersForSheet[i+1] === selectedExamForSheet.answerKey?.[i]).length : 0;
+    const malas = examQuestions ? Array.from({ length: examQuestions }).filter((_, i) => studentAnswersForSheet[i+1] && studentAnswersForSheet[i+1] !== '-' && studentAnswersForSheet[i+1] !== selectedExamForSheet.answerKey?.[i]).length : 0;
+    const blancas = examQuestions - buenas - malas;
+    const total = (buenas * (selectedExamForSheet.pointsPerGood || 1)) - (malas * (selectedExamForSheet.pointsPerBad || 0));
+    
+    const result = { buenas, malas, blancas, total };
+    setExamResult(result);
+    setJustSubmitted(true);
+    setIsTimerActive(false);
+    
+    if (onSaveGrade) {
+      const answersArray = Array.from({ length: selectedExamForSheet.numQuestions || 0 }).map((_, i) => studentAnswersForSheet[i + 1] || '-');
+      
+      onSaveGrade({
+        materia: selectedExamForSheet.name,
+        examType: selectedExamForSheet.id,
+        nota: total,
+        buenas,
+        malas,
+        blancas,
+        maxScore: selectedExamForSheet.maxScore,
+        pointsPerGood: selectedExamForSheet.pointsPerGood,
+        pointsPerBad: selectedExamForSheet.pointsPerBad,
+        numQuestions: selectedExamForSheet.numQuestions,
+        isOpticalSheet: true,
+        studentId: consultasResult.id,
+        studentName: `${consultasResult.nombre} ${consultasResult.apellido}`,
+        studentAnswers: answersArray,
+        submittedAt: new Date().toISOString(),
+      });
+    }
+    
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, [selectedExamForSheet, examResult, studentAnswersForSheet, onSaveGrade, consultasResult]);
+
+  React.useEffect(() => {
+    let interval: any;
+    if (isTimerActive && timeLeft !== null && timeLeft > 0) {
+      interval = setInterval(() => {
+        setTimeLeft(prev => (prev !== null ? prev - 1 : null));
+      }, 1000);
+    } else if (timeLeft === 0 && isTimerActive) {
+      handleSubmit();
+    }
+    return () => clearInterval(interval);
+  }, [isTimerActive, timeLeft, handleSubmit]);
+
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
   const studentSchedules = (schedules || []).filter(s => {
     if (consultasResult.rol === 'Docente') {
       const course = courses.find(c => c.name === s.materia || c.id === (s as any).courseId);
@@ -142,26 +247,31 @@ const ConsultasModal: React.FC<ConsultasModalProps> = ({
 
   // Filter courses to only those relevant to the student's grade or those they have grades for
   const baseRelevantCourses = courses.filter(c => 
-    studentSchedules.some(s => s.materia === c.name) || 
-    studentGrades.some(g => g.materia.startsWith(c.name))
+    c.name !== "Examen" && (
+      studentSchedules.some(s => s.materia === c.name) || 
+      studentGrades.some(g => g.materia !== "Examen" && g.materia.startsWith(c.name))
+    )
   );
 
-  // Add virtual courses for each unique examType found in grades with materia "Examen"
+  // Add virtual courses for each unique examType found in grades with materia "Examen" or isOpticalSheet
   const examTypesInGrades = Array.from(new Set(
     studentGrades
-      .filter(g => g.materia === "Examen")
+      .filter(g => g.materia === "Examen" || g.isOpticalSheet)
       .map(g => g.examType)
   )).filter(Boolean);
 
-  const relevantCourses = [
-    ...baseRelevantCourses,
-    ...examTypesInGrades.map(type => ({
-      id: `exam-${type}`,
-      name: type,
-      color: '#6366f1', // Indigo for exams
-      isExam: true
-    }))
-  ];
+  const examCourses = examTypesInGrades.map(type => ({
+    id: `exam-${type}`,
+    name: type,
+    color: '#6366f1', // Indigo for exams
+    isExam: true
+  }));
+
+  const relevantCourses = activeConsultasTab === 'examenes' 
+    ? examCourses 
+    : activeConsultasTab === 'notas' 
+      ? baseRelevantCourses 
+      : [...baseRelevantCourses, ...examCourses];
   return (
     <div className={`fixed inset-0 z-[100] flex items-center justify-center p-2 md:p-10 bg-slate-950/90 backdrop-blur-xl animate-fade-in ${isFullScreen ? 'z-[200]' : ''}`}>
       <div className={`bg-white rounded-[2rem] md:rounded-[3rem] shadow-2xl w-full max-w-5xl h-full max-h-[95vh] md:max-h-[90vh] overflow-hidden flex flex-col animate-slide-up relative ${isFullScreen ? 'max-w-full max-h-full rounded-none' : ''}`}>
@@ -177,7 +287,7 @@ const ConsultasModal: React.FC<ConsultasModalProps> = ({
         <div className={`flex-1 overflow-y-auto no-scrollbar bg-slate-50 ${isFullScreen ? 'overflow-hidden' : ''}`}>
           {/* Modal Header */}
           {!isFullScreen && (
-            <div className="p-6 md:p-12 border-b border-slate-100 flex flex-col md:flex-row justify-between items-center gap-6 md:gap-8 text-white relative overflow-hidden" style={{ background: `linear-gradient(135deg, ${consultasResult.primaryColor || globalConfig.theme.primaryColor} 0%, ${consultasResult.secondaryColor || globalConfig.theme.secondaryColor} 100%)` }}>
+            <div className="p-6 md:p-12 border-b border-slate-100 flex flex-col md:flex-row justify-between items-center gap-6 md:gap-8 text-white relative overflow-hidden" style={{ background: `linear-gradient(135deg, ${consultasResult.primaryColor || globalConfig.theme?.primaryColor || '#1e3a8a'} 0%, ${consultasResult.secondaryColor || globalConfig.theme?.secondaryColor || '#3b82f6'} 100%)` }}>
               <div className="absolute top-0 right-0 w-96 h-96 bg-white/10 rounded-full -mr-48 -mt-48 blur-3xl"></div>
               <div className="flex flex-col sm:flex-row items-center gap-4 md:gap-6 relative z-10 w-full md:w-auto text-center sm:text-left">
                 <div className="w-20 h-20 md:w-24 md:h-24 rounded-2xl md:rounded-3xl bg-white/10 p-1 border border-white/20 mx-auto sm:mx-0 shadow-2xl">
@@ -199,7 +309,7 @@ const ConsultasModal: React.FC<ConsultasModalProps> = ({
               </div>
               {consultasResult?.rol === 'Docente' ? (
                 <div className="flex bg-white/10 p-1 rounded-lg border border-white/10 overflow-x-auto no-scrollbar relative z-10 w-full md:w-auto justify-start md:justify-center shadow-xl gap-1">
-                  {pub.schedule && pub.hideTeacherSchedule && (
+                  {safePub.schedule && safePub.hideTeacherSchedule && (
                     <button 
                       onClick={() => setActiveConsultasTab('horario')}
                       className={`flex-1 md:flex-none px-3 md:px-6 py-2 md:py-4 rounded-md md:rounded-xl font-black text-[8px] md:text-[10px] uppercase tracking-widest transition-all whitespace-nowrap ${activeConsultasTab === 'horario' ? 'bg-white text-slate-900 shadow-xl scale-105' : 'text-white/60 hover:text-white'}`}
@@ -207,30 +317,42 @@ const ConsultasModal: React.FC<ConsultasModalProps> = ({
                   )}
                 </div>
               ) : (
-                <div className="flex bg-white/10 p-1 rounded-lg border border-white/10 overflow-x-auto no-scrollbar relative z-10 w-full md:w-auto justify-start md:justify-center shadow-xl gap-1">
-                  {pub.attendance && (
+                <div className="grid grid-cols-3 md:flex bg-white/10 p-1 rounded-lg border border-white/10 relative z-10 w-full md:w-auto justify-center shadow-xl gap-1">
+                  {safePub.attendance && (
                     <button 
                       onClick={() => setActiveConsultasTab('asistencia')}
-                      className={`flex-1 md:flex-none px-3 md:px-6 py-2 md:py-4 rounded-md md:rounded-xl font-black text-[8px] md:text-[10px] uppercase tracking-widest transition-all whitespace-nowrap ${activeConsultasTab === 'asistencia' ? 'bg-white text-slate-900 shadow-xl scale-105' : 'text-white/60 hover:text-white'}`}
+                      className={`px-2 md:px-6 py-3 md:py-4 rounded-md md:rounded-xl font-black text-[8px] md:text-[10px] uppercase tracking-widest transition-all ${activeConsultasTab === 'asistencia' ? 'bg-white text-slate-900 shadow-xl scale-105' : 'text-white/60 hover:text-white'}`}
                     >Asistencia</button>
                   )}
-                  {pub.alerts && (
+                  {safePub.alerts && (
                     <button 
                       onClick={() => setActiveConsultasTab('alerta')}
-                      className={`flex-1 md:flex-none px-3 md:px-6 py-2 md:py-4 rounded-md md:rounded-xl font-black text-[8px] md:text-[10px] uppercase tracking-widest transition-all whitespace-nowrap ${activeConsultasTab === 'alerta' ? 'bg-white text-slate-900 shadow-xl scale-105' : 'text-white/60 hover:text-white'}`}
+                      className={`px-2 md:px-6 py-3 md:py-4 rounded-md md:rounded-xl font-black text-[8px] md:text-[10px] uppercase tracking-widest transition-all ${activeConsultasTab === 'alerta' ? 'bg-white text-slate-900 shadow-xl scale-105' : 'text-white/60 hover:text-white'}`}
                     >Alertas</button>
                   )}
-                  {pub.schedule && (
+                  {safePub.schedule && (
                     <button 
                       onClick={() => setActiveConsultasTab('horario')}
-                      className={`flex-1 md:flex-none px-3 md:px-6 py-2 md:py-4 rounded-md md:rounded-xl font-black text-[8px] md:text-[10px] uppercase tracking-widest transition-all whitespace-nowrap ${activeConsultasTab === 'horario' ? 'bg-white text-slate-900 shadow-xl scale-105' : 'text-white/60 hover:text-white'}`}
+                      className={`px-2 md:px-6 py-3 md:py-4 rounded-md md:rounded-xl font-black text-[8px] md:text-[10px] uppercase tracking-widest transition-all ${activeConsultasTab === 'horario' ? 'bg-white text-slate-900 shadow-xl scale-105' : 'text-white/60 hover:text-white'}`}
                     >Horario</button>
                   )}
-                  {pub.grades && (
+                  {safePub.grades && (
                     <button 
                       onClick={() => setActiveConsultasTab('notas')}
-                      className={`flex-1 md:flex-none px-3 md:px-6 py-2 md:py-4 rounded-md md:rounded-xl font-black text-[8px] md:text-[10px] uppercase tracking-widest transition-all whitespace-nowrap ${activeConsultasTab === 'notas' ? 'bg-white text-slate-900 shadow-xl scale-105' : 'text-white/60 hover:text-white'}`}
+                      className={`px-2 md:px-6 py-3 md:py-4 rounded-md md:rounded-xl font-black text-[8px] md:text-[10px] uppercase tracking-widest transition-all ${activeConsultasTab === 'notas' ? 'bg-white text-slate-900 shadow-xl scale-105' : 'text-white/60 hover:text-white'}`}
                     >Notas</button>
+                  )}
+                  {safePub.opticalSheetEnabled && (
+                    <button 
+                      onClick={() => setActiveConsultasTab('ficha_optica')}
+                      className={`px-2 md:px-6 py-3 md:py-4 rounded-md md:rounded-xl font-black text-[8px] md:text-[10px] uppercase tracking-widest transition-all ${activeConsultasTab === 'ficha_optica' ? 'bg-white text-slate-900 shadow-xl scale-105' : 'text-white/60 hover:text-white'}`}
+                    >Ficha Examen</button>
+                  )}
+                  {(safePub.exams ?? true) && (
+                    <button 
+                      onClick={() => setActiveConsultasTab('examenes')}
+                      className={`px-2 md:px-6 py-3 md:py-4 rounded-md md:rounded-xl font-black text-[8px] md:text-[10px] uppercase tracking-widest transition-all ${activeConsultasTab === 'examenes' ? 'bg-white text-slate-900 shadow-xl scale-105' : 'text-white/60 hover:text-white'}`}
+                    >Exámenes</button>
                   )}
                 </div>
               )}
@@ -241,27 +363,67 @@ const ConsultasModal: React.FC<ConsultasModalProps> = ({
           <div className={`${isFullScreen ? 'p-0 h-full' : 'p-6 md:p-12'}`}>
             {activeConsultasTab === 'asistencia' && (
               <div className="space-y-6">
-                <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">Registro de Asistencia</h3>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {attendance.filter(a => a.studentId === consultasResult.id).length > 0 ? (
-                    attendance.filter(a => a.studentId === consultasResult.id).map(a => (
-                      <div key={a.id} className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm flex justify-between items-center">
-                        <div>
-                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{a.fecha}</p>
-                          <p className="font-bold text-slate-700">{a.hora}</p>
-                        </div>
-                        <span className={`px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest ${
-                          a.estado === 'entrada' ? 'bg-emerald-100 text-emerald-600' :
-                          a.estado === 'tardanza' ? 'bg-amber-100 text-amber-600' :
-                          'bg-rose-100 text-rose-600'
-                        }`}>{a.estado}</span>
-                      </div>
-                    ))
-                  ) : (
-                    <div className="col-span-full py-12 text-center bg-white rounded-3xl border-2 border-dashed border-slate-100">
-                      <p className="text-slate-400 font-bold uppercase tracking-widest text-xs">No hay registros de asistencia</p>
-                    </div>
-                  )}
+                <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">Historial de Asistencia</h3>
+                <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="bg-slate-50 border-b border-slate-100">
+                          <th className="p-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Día / Fecha</th>
+                          <th className="p-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Entrada</th>
+                          <th className="p-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Salida</th>
+                          <th className="p-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Estado</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {attendance.filter(a => a.studentId === consultasResult.id).length > 0 ? (
+                          attendance.filter(a => a.studentId === consultasResult.id)
+                            .sort((a, b) => {
+                              // Sort by date descending (newest first)
+                              const dateA = a.fecha.split('/').reverse().join('-');
+                              const dateB = b.fecha.split('/').reverse().join('-');
+                              return new Date(dateB).getTime() - new Date(dateA).getTime();
+                            })
+                            .map(a => {
+                              // Calculate day of week
+                              const dateParts = a.fecha.split('/'); // Assuming DD/MM/YYYY
+                              let dateObj;
+                              if (dateParts.length === 3) {
+                                dateObj = new Date(parseInt(dateParts[2]), parseInt(dateParts[1]) - 1, parseInt(dateParts[0]));
+                              } else {
+                                dateObj = new Date(a.fecha);
+                              }
+                              const dayName = dateObj.toLocaleDateString('es-ES', { weekday: 'long' });
+                              
+                              return (
+                                <tr key={a.id} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
+                                  <td className="p-4">
+                                    <p className="text-xs font-bold text-slate-700 capitalize">{dayName}</p>
+                                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{a.fecha}</p>
+                                  </td>
+                                  <td className="p-4 font-bold text-slate-600">{a.horaEntrada || '-'}</td>
+                                  <td className="p-4 font-bold text-slate-600">{a.horaSalida || '-'}</td>
+                                  <td className="p-4">
+                                    <span className={`px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest ${
+                                      a.estado === 'entrada' ? 'bg-emerald-100 text-emerald-600' :
+                                      a.estado === 'tardanza' ? 'bg-amber-100 text-amber-600' :
+                                      a.estado === 'permiso' ? 'bg-blue-100 text-blue-600' :
+                                      'bg-rose-100 text-rose-600'
+                                    }`}>{a.estado === 'entrada' ? 'Presente' : a.estado}</span>
+                                  </td>
+                                </tr>
+                              );
+                          })
+                        ) : (
+                          <tr>
+                            <td colSpan={4} className="p-8 text-center text-slate-400 font-bold uppercase tracking-widest text-xs">
+                              No hay registros de asistencia
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               </div>
             )}
@@ -448,15 +610,17 @@ const ConsultasModal: React.FC<ConsultasModalProps> = ({
               </div>
             )}
 
-            {activeConsultasTab === 'notas' && (
+            {(activeConsultasTab === 'notas' || activeConsultasTab === 'examenes') && (
               <div className="space-y-6">
                 <div className="flex flex-col md:flex-row justify-between items-center gap-4">
-                  <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">Registro de Calificaciones</h3>
+                  <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">{activeConsultasTab === 'examenes' ? 'Exámenes' : 'Registro de Calificaciones'}</h3>
                   <div className="flex flex-wrap gap-2 justify-center">
-                    <button 
-                      onClick={() => setSelectedCourseId(null)}
-                      className={`px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all ${!selectedCourseId ? 'bg-slate-900 text-white shadow-lg' : 'bg-white text-slate-400 border border-slate-100'}`}
-                    >Todos</button>
+                    {activeConsultasTab !== 'examenes' && (
+                      <button 
+                        onClick={() => setSelectedCourseId(null)}
+                        className={`px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all ${!selectedCourseId ? 'bg-slate-900 text-white shadow-lg' : 'bg-white text-slate-400 border border-slate-100'}`}
+                      >Todos</button>
+                    )}
                     {relevantCourses.map(course => (
                       <button 
                         key={course.id}
@@ -472,61 +636,157 @@ const ConsultasModal: React.FC<ConsultasModalProps> = ({
                     .filter(c => !selectedCourseId || c.id === selectedCourseId)
                     .map(course => {
                       const courseGrades = (course as any).isExam 
-                        ? studentGrades.filter(g => g.materia === "Examen" && g.examType === course.name)
-                        : studentGrades.filter(g => g.materia.startsWith(course.name));
-                      const avg = courseGrades.length > 0 ? courseGrades.reduce((a, b) => a + b.nota, 0) / courseGrades.length : 0;
+                        ? studentGrades.filter(g => g.examType === course.name && (g.materia === "Examen" || g.isOpticalSheet))
+                        : studentGrades.filter(g => g.materia !== "Examen" && !g.materia.startsWith("Examen de") && !g.isOpticalSheet && g.materia.startsWith(course.name));
                       
                       return (
-                        <div key={course.id} className="space-y-3">
-                          <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm flex justify-between items-center group hover:border-blue-200 transition-all">
-                            <div className="flex items-center gap-4">
-                              <div className="w-3 h-12 rounded-full" style={{ backgroundColor: course.color }}></div>
-                              <div>
-                                <p className="font-black text-slate-800 uppercase tracking-tight text-sm">{course.name}</p>
-                                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Promedio Actual</p>
+                          <React.Fragment key={course.id}>
+                            <button onClick={() => setSelectedCourseId(course.id)} className={`w-full bg-white p-6 rounded-3xl border ${selectedCourseId === course.id ? 'border-indigo-300 shadow-lg' : 'border-slate-100 shadow-sm'} flex justify-between items-center group hover:border-indigo-200 transition-all`}>
+                              <div className="flex items-center gap-4">
+                                <div className="w-12 h-12 rounded-2xl bg-indigo-50 flex items-center justify-center">
+                                  <Award size={20} className="text-indigo-600" />
+                                </div>
+                                <div className="text-left">
+                                  <p className="font-black text-slate-800 uppercase tracking-tight text-sm">{course.name}</p>
+                                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{courseGrades.length} registro(s)</p>
+                                </div>
                               </div>
-                            </div>
-                            <div className={`w-14 h-14 rounded-2xl flex items-center justify-center font-black text-xl shadow-inner ${
-                              avg >= 11 ? 'bg-blue-50 text-blue-600' : 'bg-rose-50 text-rose-600'
-                            }`}>
-                              {avg > 0 ? avg.toFixed(1) : '-'}
-                            </div>
-                          </div>
-                          
-                          {selectedCourseId === course.id && courseGrades.length > 0 && (
-                            <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden animate-slide-up">
-                              <div className="p-3 bg-slate-50 border-b border-slate-100">
-                                <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest text-center">Detalle de Notas</p>
-                              </div>
-                              <div className="divide-y divide-slate-50">
-                                {courseGrades.map(g => (
-                                  <div key={g.id} className="p-3 flex justify-between items-center">
-                                    <div className="flex items-center gap-3">
-                                      <FileText size={14} className="text-slate-300" />
-                                      <div className="flex flex-col">
-                                        <p className="text-[10px] font-black text-slate-800 uppercase tracking-tight">{g.examType || 'Nota'}</p>
-                                        <div className="flex gap-2">
-                                          <span className="text-[7px] font-black text-emerald-600 uppercase tracking-widest">B: {g.buenas || 0}</span>
-                                          <span className="text-[7px] font-black text-rose-600 uppercase tracking-widest">M: {g.malas || 0}</span>
-                                          <span className="text-[7px] font-black text-slate-400 uppercase tracking-widest">Bl: {g.blancas || 0}</span>
-                                          <span className="text-[7px] font-black text-blue-500 uppercase tracking-widest ml-1">Pts: {g.rawScore?.toFixed(1) || '-'}</span>
+                              <span className={`text-[10px] font-black uppercase tracking-widest ${selectedCourseId === course.id ? 'text-indigo-600' : 'text-slate-300'}`}>Ver Detalles →</span>
+                            </button>
+                            {selectedCourseId === course.id && courseGrades.length > 0 && (
+                              <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden animate-slide-up">
+                                {selectedGradeId ? (
+                                  <>
+                                    <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+                                      <button onClick={() => setSelectedGradeId(null)} className="text-[10px] font-black text-indigo-600 uppercase tracking-widest underline">« Volver a listas</button>
+                                    </div>
+                                    {courseGrades.filter(g => g.id === selectedGradeId).map(g => (
+                                      <div key={g.id} className="p-6 space-y-5 bg-white last:rounded-b-2xl">
+                                        <div className="flex justify-between items-start">
+                                          <div className="flex items-center gap-4">
+                                            <div className="w-12 h-12 rounded-2xl bg-indigo-50 flex items-center justify-center text-indigo-600">
+                                              <FileText size={20} />
+                                            </div>
+                                            <div className="flex flex-col">
+                                              <p className="text-sm font-black text-slate-800 uppercase tracking-tight">{g.examType || 'Nota'}</p>
+                                              <p className="text-[11px] font-bold text-slate-400 mt-0.5">{g.fecha}</p>
+                                            </div>
+                                          </div>
+                                          <div className="px-5 py-2.5 bg-indigo-50 rounded-2xl text-center">
+                                              <p className="text-[10px] font-black uppercase text-indigo-400 mb-1">Nota</p>
+                                              <span className={`font-black text-2xl ${g.nota >= 11 ? 'text-blue-600' : 'text-rose-600'}`}>{g.nota.toFixed(1)}</span>
+                                          </div>
                                         </div>
+                                        {(course as any).isExam && g.isOpticalSheet && (
+                                          <div className="rounded-[2rem] md:rounded-3xl border border-slate-100 p-4 md:p-8 bg-slate-50 shadow-inner">
+                                            {/* Extra Highlighted Total Points */}
+                                            <div className="flex flex-col items-center justify-center mb-6 md:mb-8 bg-indigo-600 p-6 md:p-8 rounded-[2rem] md:rounded-[2.5rem] text-white shadow-2xl shadow-indigo-200 relative overflow-hidden">
+                                                <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -mr-16 -mt-16"></div>
+                                                <span className="font-black text-[9px] md:text-[10px] uppercase opacity-80 tracking-[0.2em] mb-2 text-center">Puntaje Total Obtenido</span>
+                                                <span className="font-black text-5xl sm:text-6xl md:text-7xl drop-shadow-lg">{g.nota.toFixed(1)}</span>
+                                            </div>
+                                            
+                                            {/* Improved Stats Grid - Responsive Layout */}
+                                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 md:gap-4 mb-6 md:mb-8">
+                                                <div className="bg-white border border-emerald-100 p-4 md:p-5 rounded-2xl md:rounded-[2rem] flex sm:flex-col items-center justify-between sm:justify-center shadow-sm">
+                                                    <div className="flex items-center gap-3 sm:flex-col sm:gap-2">
+                                                      <div className="w-8 h-8 rounded-full bg-emerald-50 flex items-center justify-center">
+                                                        <div className="w-2 h-2 rounded-full bg-emerald-500"></div>
+                                                      </div>
+                                                      <p className="text-[9px] md:text-[10px] font-black text-emerald-600 uppercase tracking-widest">Buenas</p>
+                                                    </div>
+                                                    <p className="text-xl md:text-2xl font-black text-slate-800">{g.buenas}</p>
+                                                </div>
+                                                <div className="bg-white border border-rose-100 p-4 md:p-5 rounded-2xl md:rounded-[2rem] flex sm:flex-col items-center justify-between sm:justify-center shadow-sm">
+                                                    <div className="flex items-center gap-3 sm:flex-col sm:gap-2">
+                                                      <div className="w-8 h-8 rounded-full bg-rose-50 flex items-center justify-center">
+                                                        <div className="w-2 h-2 rounded-full bg-rose-500"></div>
+                                                      </div>
+                                                      <p className="text-[9px] md:text-[10px] font-black text-rose-600 uppercase tracking-widest">Malas</p>
+                                                    </div>
+                                                    <p className="text-xl md:text-2xl font-black text-slate-800">{g.malas}</p>
+                                                </div>
+                                                <div className="bg-white border border-slate-200 p-4 md:p-5 rounded-2xl md:rounded-[2rem] flex sm:flex-col items-center justify-between sm:justify-center shadow-sm">
+                                                    <div className="flex items-center gap-3 sm:flex-col sm:gap-2">
+                                                      <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center">
+                                                        <div className="w-2 h-2 rounded-full bg-slate-400"></div>
+                                                      </div>
+                                                      <p className="text-[9px] md:text-[10px] font-black text-slate-600 uppercase tracking-widest">Blancas</p>
+                                                    </div>
+                                                    <p className="text-xl md:text-2xl font-black text-slate-800">{g.blancas}</p>
+                                                </div>
+                                            </div>
+                                            
+                                            {/* Answer Comparison Grid - Optimized for all screens */}
+                                            <div className="bg-white p-4 md:p-6 rounded-2xl md:rounded-[2.5rem] border border-slate-100 shadow-sm">
+                                              <p className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase mb-4 tracking-[0.2em] text-center">Desglose de Respuestas</p>
+                                              <div className="grid grid-cols-4 sm:grid-cols-5 md:grid-cols-8 lg:grid-cols-10 gap-2 md:gap-3">
+                                                {(() => {
+                                                  const examDef = examTypes?.find(et => et.name === g.examType);
+                                                  if (!examDef || !examDef.numQuestions) return null;
+                                                  
+                                                  return Array.from({ length: examDef.numQuestions }).map((_, i) => {
+                                                    const correct = examDef.answerKey?.[i] || '-';
+                                                    const studentAnswer = (g.studentAnswers && (g.studentAnswers[i] || (g.studentAnswers as any)[i+1])) || '-';
+                                                    const isCorrect = studentAnswer === correct && correct !== '-';
+                                                    return (
+                                                      <div key={i} className={`flex flex-col items-center p-2 md:p-3 rounded-xl md:rounded-2xl border transition-all ${
+                                                        isCorrect 
+                                                          ? 'bg-emerald-50 border-emerald-100 shadow-sm shadow-emerald-50' 
+                                                          : studentAnswer === '-' 
+                                                            ? 'bg-slate-50 border-slate-100' 
+                                                            : 'bg-rose-50 border-rose-100 shadow-sm shadow-rose-50'
+                                                      }`}>
+                                                        <span className={`text-[8px] md:text-[9px] font-black mb-1 md:mb-2 ${!isCorrect && studentAnswer !== '-' ? 'text-rose-600' : 'text-slate-400'}`}>{i+1}</span>
+                                                        <div className={`w-7 h-7 md:w-8 md:h-8 rounded-full flex items-center justify-center text-xs md:text-sm font-black mb-1 ${
+                                                          isCorrect 
+                                                            ? 'bg-emerald-500 text-white' 
+                                                            : studentAnswer === '-' 
+                                                              ? 'bg-slate-200 text-slate-500' 
+                                                              : 'bg-rose-500 text-white'
+                                                        }`}>
+                                                          {studentAnswer}
+                                                        </div>
+                                                        <div className="mt-1 flex flex-col items-center gap-0.5">
+                                                          <span className="text-[6px] md:text-[7px] font-black text-slate-400 uppercase tracking-tighter">Clave:</span>
+                                                          <span className="text-[9px] md:text-[10px] font-black text-indigo-600">{correct}</span>
+                                                        </div>
+                                                      </div>
+                                                    );
+                                                  });
+                                                })()}
+                                              </div>
+                                            </div>
+                                          </div>
+                                        )}
                                       </div>
-                                    </div>
-                                    <div className="flex items-center gap-3">
-                                      <p className="text-[9px] font-bold text-slate-400">{g.fecha}</p>
-                                      <span className={`font-black text-xs ${g.nota >= 11 ? 'text-blue-600' : 'text-rose-600'}`}>{g.nota.toString().padStart(2, '0')}</span>
-                                    </div>
+                                    ))}
+                                  </>
+                                ) : (
+                                  <div className="divide-y divide-slate-100">
+                                    {courseGrades.map(g => (
+                                      <button 
+                                        key={g.id} 
+                                        onClick={() => setSelectedGradeId(g.id)}
+                                        className="w-full text-left p-4 hover:bg-slate-50 flex items-center justify-between border-b border-slate-50 last:border-b-0"
+                                      >
+                                        <div className="flex flex-col">
+                                          <p className="text-xs font-black text-slate-800 uppercase tracking-tight">{g.examType || 'Nota'}</p>
+                                          <p className="text-[10px] font-bold text-slate-400 mt-0.5">{g.fecha}</p>
+                                        </div>
+                                        <span className="text-[10px] font-black text-indigo-500 uppercase tracking-widest">Ver Detalles →</span>
+                                      </button>
+                                    ))}
                                   </div>
-                                ))}
+                                )}
                               </div>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  
-                  {!selectedCourseId && (
+                            )}
+                          </React.Fragment>
+                        );
+                      })}
+                    </div>
+                    
+                    {!selectedCourseId && activeConsultasTab === 'notas' && (
                     <div className="bg-slate-900 p-6 rounded-3xl shadow-xl flex justify-between items-center col-span-full">
                       <div className="flex items-center gap-4">
                         <div className="w-3 h-12 rounded-full bg-amber-500"></div>
@@ -541,8 +801,300 @@ const ConsultasModal: React.FC<ConsultasModalProps> = ({
                     </div>
                   )}
                 </div>
-              </div>
-            )}
+              )}
+              {activeConsultasTab === 'ficha_optica' && (
+                <div className="space-y-8 animate-fade-in">
+                  {!selectedExamForSheet ? (
+                    <div className="space-y-6">
+                      <div className="flex items-center gap-4">
+                        <div className="w-12 h-12 rounded-3xl flex items-center justify-center text-white shadow-lg" style={{ backgroundColor: globalConfig.theme?.primaryColor || '#7c3aed' }}>
+                          <Layers size={24} />
+                        </div>
+                        <div>
+                          <h3 className="text-2xl font-black text-slate-800 uppercase tracking-tight">Ficha Examen Digital</h3>
+                          <p className="text-slate-400 font-bold uppercase text-[10px] tracking-widest">Seleccione un examen para comenzar</p>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {(examTypes || [])
+                          .filter(e => safePub.authorizedExams?.includes(e.id) && e.hasOpticalSheet)
+                          .map(exam => {
+                            const isReady = exam.answerKey && exam.answerKey.some(k => k !== '');
+                            const existingGrade = studentGrades.find(g => g.examType === exam.id && g.isOpticalSheet);
+                            const isCompleted = !!existingGrade;
+
+                            return (
+                              <button
+                                key={exam.id}
+                                onClick={() => {
+                                  if (!isReady) return;
+                                  setSelectedExamForSheet(exam);
+                                  
+                                  if (isCompleted) {
+                                    setExamResult({
+                                      buenas: existingGrade.buenas || 0,
+                                      malas: existingGrade.malas || 0,
+                                      blancas: existingGrade.blancas || 0,
+                                      total: existingGrade.nota || 0
+                                    });
+                                    setStudentAnswersForSheet({});
+                                    setJustSubmitted(false);
+                                    setIsTimerActive(false);
+                                    setTimeLeft(null);
+                                  } else {
+                                    setStudentAnswersForSheet({});
+                                    setExamResult(null);
+                                    setJustSubmitted(false);
+                                    if (exam.hasTimer && exam.timerMinutes) {
+                                      setTimeLeft(exam.timerMinutes * 60);
+                                      setIsTimerActive(true);
+                                    } else {
+                                      setTimeLeft(null);
+                                      setIsTimerActive(false);
+                                    }
+                                  }
+                                }}
+                                disabled={!isReady}
+                                className={`bg-white p-6 rounded-[2rem] border-2 transition-all group text-left flex items-center justify-between ${!isReady ? 'opacity-50 cursor-not-allowed grayscale' : ''}`}
+                                style={{ 
+                                  transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                                  borderColor: isReady ? '#f1f5f9' : '#f1f5f9'
+                                }}
+                                onMouseEnter={(e) => {
+                                  if (!isReady) return;
+                                  e.currentTarget.style.borderColor = globalConfig.theme?.primaryColor || '#7c3aed';
+                                  e.currentTarget.style.boxShadow = '0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1)';
+                                }}
+                                onMouseLeave={(e) => {
+                                  if (!isReady) return;
+                                  e.currentTarget.style.borderColor = '#f1f5f9';
+                                  e.currentTarget.style.boxShadow = 'none';
+                                }}
+                              >
+                                <div className="flex items-center gap-5">
+                                  <div className="w-14 h-14 rounded-2xl bg-slate-50 flex items-center justify-center text-slate-400 transition-all group-hover:bg-opacity-10" style={{ color: isCompleted ? '#10b981' : (globalConfig.theme?.primaryColor || '#7c3aed') }}>
+                                    {isCompleted ? <ShieldCheck size={28} /> : <FileText size={28} />}
+                                  </div>
+                                  <div>
+                                    <div className="flex items-center gap-2">
+                                      <p className="font-black text-slate-800 uppercase tracking-tight text-lg transition-all group-hover:text-primary" style={{ color: 'inherit' }}>
+                                        {exam.name}
+                                      </p>
+                                      {isCompleted && (
+                                        <span className="bg-emerald-100 text-emerald-600 px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-widest">Completado</span>
+                                      )}
+                                    </div>
+                                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                                      {exam.numQuestions} Preguntas {!isReady && "(Configurar Clave)"}
+                                    </p>
+                                  </div>
+                                </div>
+                                <div className="w-10 h-10 rounded-full bg-slate-50 flex items-center justify-center text-slate-300 transition-all group-hover:text-white" 
+                                  style={{ backgroundColor: isCompleted ? '#10b981' : (isReady ? 'var(--tw-bg-slate-50)' : '#f8fafc'), color: isCompleted ? 'white' : 'inherit' }}
+                                  onMouseEnter={(e) => { if (isReady && !isCompleted) e.currentTarget.style.backgroundColor = globalConfig.theme?.primaryColor || '#7c3aed'; }}
+                                  onMouseLeave={(e) => { if (isReady && !isCompleted) e.currentTarget.style.backgroundColor = isCompleted ? '#10b981' : '#f8fafc'; }}
+                                >
+                                  <Award size={20} />
+                                </div>
+                              </button>
+                            );
+                          })}
+                        
+                        {(examTypes || []).filter(e => safePub.authorizedExams?.includes(e.id) && e.hasOpticalSheet).length === 0 && (
+                          <div className="col-span-full py-16 text-center bg-slate-50 rounded-[3rem] border-4 border-dashed border-slate-200">
+                             <Info className="mx-auto text-slate-300 mb-4" size={48} />
+                             <p className="text-slate-400 font-black uppercase text-xs tracking-widest">No hay exámenes autorizados disponibles</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-8 pb-12">
+                      <div className="flex flex-col md:flex-row justify-between items-center gap-6 bg-white p-6 md:p-8 rounded-[2.5rem] border border-slate-100 shadow-xl">
+                        <div className="flex items-center gap-5">
+                          <button 
+                            onClick={() => {
+                              if (examResult || confirm('¿Desea salir del examen actual? Los cambios no se guardarán.')) {
+                                setSelectedExamForSheet(null);
+                                setExamResult(null);
+                              }
+                            }}
+                            className="w-12 h-12 rounded-2xl bg-slate-100 flex items-center justify-center text-slate-500 hover:bg-slate-200 transition-all"
+                          >
+                            <X size={20} />
+                          </button>
+                          <div>
+                            <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">{selectedExamForSheet.name}</h3>
+                            <p className="text-slate-400 font-bold uppercase text-[10px] tracking-widest">{selectedExamForSheet.numQuestions} Preguntas</p>
+                          </div>
+                        </div>
+
+                        {isTimerActive && timeLeft !== null && !examResult && (
+                          <div className={`flex items-center gap-3 px-6 py-3 rounded-2xl border-2 transition-all ${timeLeft < 60 ? 'bg-rose-50 border-rose-200 text-rose-600 animate-pulse' : 'bg-amber-50 border-amber-200 text-amber-600'}`}>
+                            <AlertCircle size={20} />
+                            <div className="text-center">
+                              <p className="text-[8px] font-black uppercase tracking-widest leading-none mb-1">Tiempo Restante</p>
+                              <p className="text-xl font-black tabular-nums">{formatTime(timeLeft)}</p>
+                            </div>
+                          </div>
+                        )}
+
+                        {!examResult && (
+                          <button
+                            onClick={handleSubmit}
+                            className="w-full md:w-auto px-10 py-5 text-white rounded-2xl font-black uppercase tracking-[0.2em] text-xs hover:opacity-90 transition-all shadow-2xl"
+                            style={{ backgroundColor: globalConfig.theme?.primaryColor || '#7c3aed', boxShadow: `0 20px 25px -5px ${globalConfig.theme?.primaryColor}44` }}
+                          >
+                            Finalizar y Calificar
+                          </button>
+                        )}
+                      </div>
+
+                      {examResult && (
+                        <div className="flex flex-col items-center gap-6 animate-slide-up">
+                          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 w-full">
+                            <div className="p-8 rounded-[2.5rem] text-white flex flex-col items-center justify-center shadow-2xl transition-all"
+                                 style={{ backgroundColor: globalConfig.theme?.primaryColor || '#7c3aed', boxShadow: `0 20px 25px -5px ${globalConfig.theme?.primaryColor}44` }}>
+                               <p className="text-[10px] font-black uppercase opacity-60 mb-2 tracking-widest">Puntaje Total</p>
+                               <p className="text-5xl font-black">{examResult.total.toFixed(1)}</p>
+                               {!justSubmitted && (
+                                 <div className="mt-4 px-4 py-2 bg-white/20 rounded-full flex items-center gap-2">
+                                   <ShieldCheck size={14} />
+                                   <span className="text-[10px] font-black uppercase tracking-widest">Examen Completado</span>
+                                 </div>
+                               )}
+                            </div>
+                            
+                            <div className="bg-emerald-50 border-2 border-emerald-100 p-6 rounded-[2rem] flex flex-col items-center justify-center">
+                               <p className="text-[10px] font-black text-emerald-600 uppercase mb-2 tracking-widest">Correctas</p>
+                               <p className="text-3xl font-black text-emerald-700">{examResult.buenas}</p>
+                            </div>
+                            <div className="bg-rose-50 border-2 border-rose-100 p-6 rounded-[2rem] flex flex-col items-center justify-center">
+                               <p className="text-[10px] font-black text-rose-600 uppercase mb-2 tracking-widest">Incorrectas</p>
+                               <p className="text-3xl font-black text-rose-700">{examResult.malas}</p>
+                            </div>
+                            <div className="bg-slate-50 border-2 border-slate-100 p-6 rounded-[2rem] flex flex-col items-center justify-center">
+                               <p className="text-[10px] font-black text-slate-400 uppercase mb-2 tracking-widest">Blancas</p>
+                               <p className="text-3xl font-black text-slate-500">{examResult.blancas}</p>
+                            </div>
+                          </div>
+
+                          {!justSubmitted && (
+                            <div className="bg-white px-8 py-4 rounded-3xl border border-slate-100 shadow-sm flex items-center gap-3">
+                              <CalendarCheck size={18} className="text-indigo-600" />
+                              <div className="text-left">
+                                <p className="text-slate-400 font-bold uppercase text-[8px] tracking-widest leading-none">Entregado el</p>
+                                <p className="text-slate-700 font-black text-xs">
+                                  {(() => {
+                                    const grade = studentGrades.find(g => g.examType === selectedExamForSheet.id && g.isOpticalSheet);
+                                    return grade?.submittedAt ? new Date(grade.submittedAt).toLocaleString('es-PE', {
+                                      day: '2-digit',
+                                      month: '2-digit',
+                                      year: 'numeric',
+                                      hour: '2-digit',
+                                      minute: '2-digit'
+                                    }) : 'Fecha no registrada';
+                                  })()}
+                                </p>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {(!studentGrades.find(g => g.examType === selectedExamForSheet.id && g.isOpticalSheet) || justSubmitted) && (
+                        <div className="bg-white p-8 md:p-12 rounded-[3.5rem] border border-slate-100 shadow-2xl relative overflow-hidden">
+                          <div className="absolute inset-0 pointer-events-none opacity-[0.03] flex items-center justify-center">
+                             <img src={globalConfig.logo} className="w-1/2" />
+                          </div>
+                          
+                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 relative z-10">
+                            {Array.from({ length: 3 }).map((_, colIndex) => {
+                              const totalQuestions = selectedExamForSheet.numQuestions || 0;
+                              const questionsPerCol = Math.ceil(totalQuestions / 3);
+                              const startIndex = colIndex * questionsPerCol;
+                              const endIndex = Math.min(startIndex + questionsPerCol, totalQuestions);
+                              const columnQuestions = Array.from(
+                                { length: endIndex - startIndex },
+                                (_, i) => startIndex + i
+                              );
+
+                              if (columnQuestions.length === 0) return null;
+
+                              return (
+                                <div key={colIndex} className="flex flex-col gap-3">
+                                  {columnQuestions.map((i) => {
+                                    const questionNum = i + 1;
+                                    const currentAnswer = studentAnswersForSheet[questionNum];
+                                    const correctAnswer = selectedExamForSheet.answerKey?.[i];
+                                    const isCorrect = examResult && currentAnswer === correctAnswer;
+                                    const isIncorrect = examResult && currentAnswer && currentAnswer !== '-' && currentAnswer !== correctAnswer;
+
+                                    return (
+                                      <div 
+                                        key={questionNum} 
+                                        className={`flex items-center gap-4 p-3 rounded-2xl transition-all border shadow-sm ${
+                                          examResult 
+                                            ? (isCorrect ? 'bg-emerald-50 border-emerald-100' : isIncorrect ? 'bg-rose-50 border-rose-100' : 'bg-white border-slate-100') 
+                                            : (questionNum % 2 === 0 ? 'bg-slate-50/80 border-slate-100' : 'bg-white border-slate-100')
+                                        }`}
+                                      >
+                                        <span className={`w-8 h-8 rounded-lg flex items-center justify-center text-[10px] font-black shrink-0 shadow-sm ${
+                                          examResult && isCorrect ? 'bg-emerald-600 text-white' : 
+                                          examResult && isIncorrect ? 'bg-rose-600 text-white' : 
+                                          'bg-slate-900 text-white'
+                                        }`}>
+                                          {questionNum}
+                                        </span>
+                                        <div className="flex gap-1.5 overflow-x-auto no-scrollbar">
+                                          {['A', 'B', 'C', 'D', 'E'].map(option => {
+                                            const isSelected = currentAnswer === option;
+                                            const isRight = examResult && option === correctAnswer;
+                                            
+                                            return (
+                                              <button
+                                                key={option}
+                                                disabled={!!examResult}
+                                                onClick={() => {
+                                                  setStudentAnswersForSheet(prev => ({
+                                                    ...prev,
+                                                    [questionNum]: isSelected ? '-' : option
+                                                  }));
+                                                }}
+                                                className={`w-8 h-8 rounded-full border-2 flex items-center justify-center text-[10px] font-black transition-all ${
+                                                  isSelected 
+                                                    ? 'text-white shadow-md scale-105' 
+                                                    : isRight 
+                                                      ? 'bg-emerald-500 border-emerald-500 text-white shadow-md'
+                                                      : 'bg-white border-slate-200 text-slate-400 hover:border-slate-300'
+                                                }`}
+                                                style={{ 
+                                                  backgroundColor: isSelected ? (examResult && !isRight ? '#ef4444' : (globalConfig.theme?.primaryColor || '#7c3aed')) : (isRight ? '#10b981' : 'white'),
+                                                  borderColor: isSelected ? (examResult && !isRight ? '#ef4444' : (globalConfig.theme?.primaryColor || '#7c3aed')) : (isRight ? '#10b981' : '#e2e8f0')
+                                                }}
+                                              >
+                                                {option}
+                                              </button>
+                                            );
+                                          })}
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Removal of redundant completion message as stats are now always visible */}
+                    </div>
+                  )}
+                </div>
+              )}
+              {/* Modal Content End */}
           </div>
         </div>
       </div>

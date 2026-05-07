@@ -6,6 +6,7 @@ export interface CredentialConfig {
   teacherBg?: string; // base64
   width: number; // in mm
   height: number; // in mm
+  barcodeDisplay?: 'qr' | 'qr_barcode' | 'barcode';
 }
 
 export interface Period {
@@ -27,6 +28,9 @@ export interface UserConfig {
     alerts: boolean;
     schedule: boolean;
     grades: boolean;
+    exams?: boolean;
+    opticalSheetEnabled?: boolean;
+    authorizedExams?: string[];
     hideTeacherSchedule?: boolean;
   };
   meritCategories?: MeritCategory[];
@@ -42,6 +46,7 @@ export interface AppUser {
   id: string;
   username: string;
   password: string;
+  realPassword?: string;
   fullName?: string;
   whatsapp?: string;
   email?: string;
@@ -97,6 +102,7 @@ export interface Student {
   schoolName?: string;
   studentPhone?: string;
   registrationDate?: string;
+  fechaNacimiento?: string;
 }
 
 export interface ConsultationLog {
@@ -146,6 +152,10 @@ export interface Grade {
   isIndispensable?: boolean;
   divisor?: number;
   rawScore?: number;
+  studentAnswers?: string[];
+  isOpticalSheet?: boolean;
+  isFromPublicConsultas?: boolean;
+  submittedAt?: string;
 }
 
 export interface ExamType {
@@ -158,6 +168,11 @@ export interface ExamType {
   numQuestions: number;
   isIndispensable: boolean;
   divisor: number;
+  hasOpticalSheet?: boolean; 
+  answerKey?: string[]; // E.g., ['A', 'B', 'C', 'D', 'E']
+  hasTimer?: boolean;
+  timerMinutes?: number;
+  classrooms?: string[];
 }
 
 export interface Level {
