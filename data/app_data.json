@@ -1,0 +1,615 @@
+{
+  "admin-1": {
+    "students": [
+      {
+        "id": "1777333817547",
+        "ownerId": "admin-1",
+        "nombre": "Sucesion",
+        "apellido": "indivisa",
+        "dni": "70156573",
+        "nivel": "Docente",
+        "grado": "1ER GRADO",
+        "seccion": "A",
+        "schoolName": "",
+        "studentPhone": "",
+        "registrationDate": "2026-04-27",
+        "rol": "Docente",
+        "celularApoderado": "",
+        "email": "",
+        "siteName": "",
+        "slogan": ""
+      },
+      {
+        "id": "1777333456936",
+        "ownerId": "admin-1",
+        "nombre": "San",
+        "apellido": "De Porres",
+        "dni": "70156570",
+        "nivel": "TESLA",
+        "grado": "GALENO",
+        "seccion": "M",
+        "schoolName": "TESLA",
+        "studentPhone": "",
+        "registrationDate": "2026-04-27",
+        "rol": "Estudiante",
+        "celularApoderado": "",
+        "email": "sanmartindeporres79@gmail.com",
+        "siteName": "",
+        "slogan": ""
+      }
+    ],
+    "attendance": [
+      {
+        "id": "1777333542498",
+        "ownerId": "admin-1",
+        "studentDni": "70156570",
+        "studentId": "1777333456936",
+        "studentName": "San De Porres",
+        "studentRol": "Estudiante",
+        "estado": "entrada",
+        "fecha": "27/4/2026",
+        "hora": "6:45:42 p. m.",
+        "horaEntrada": "6:45:42 p. m."
+      }
+    ],
+    "grades": [
+      {
+        "id": "1777333929960",
+        "ownerId": "admin-1",
+        "studentId": "1777333817547",
+        "studentName": "Sucesion indivisa",
+        "materia": "Examen",
+        "examType": "Tarea",
+        "periodo": "General",
+        "nota": 12,
+        "fecha": "27/4/2026",
+        "buenas": 6,
+        "malas": 3,
+        "blancas": 1,
+        "maxScore": 20,
+        "pointsPerGood": 2,
+        "pointsPerBad": 0,
+        "pointsPerBlank": 0,
+        "numQuestions": 10,
+        "isIndispensable": false,
+        "divisor": 1,
+        "rawScore": 12
+      },
+      {
+        "id": "1777334114291",
+        "ownerId": "admin-1",
+        "studentId": "1777333817547",
+        "studentName": "Sucesion indivisa",
+        "materia": "Examen",
+        "examType": "Tarea",
+        "periodo": "General",
+        "nota": 14,
+        "fecha": "27/4/2026",
+        "buenas": 7,
+        "malas": 2,
+        "blancas": 1,
+        "maxScore": 20,
+        "pointsPerGood": 2,
+        "pointsPerBad": 0,
+        "pointsPerBlank": 0,
+        "numQuestions": 10,
+        "isIndispensable": false,
+        "divisor": 1,
+        "rawScore": 14
+      },
+      {
+        "id": "1777334452722",
+        "ownerId": "admin-1",
+        "studentId": "1777333456936",
+        "studentName": "San De Porres",
+        "materia": "Examen",
+        "examType": "Tarea",
+        "periodo": "General",
+        "nota": 16,
+        "fecha": "27/4/2026",
+        "buenas": 8,
+        "malas": 1,
+        "blancas": 1,
+        "maxScore": 20,
+        "pointsPerGood": 2,
+        "pointsPerBad": 0,
+        "pointsPerBlank": 0,
+        "numQuestions": 10,
+        "isIndispensable": false,
+        "divisor": 1,
+        "rawScore": 16
+      }
+    ],
+    "incidences": [],
+    "courses": [
+      {
+        "id": "1776353327381",
+        "name": "ccccccc",
+        "color": "#3b82f6",
+        "ownerId": "admin-1",
+        "teacherId": "1777333817547"
+      }
+    ],
+    "gradeLevels": [
+      {
+        "id": "1776353300853",
+        "ownerId": "admin-1",
+        "nombre": "1ER GRADO",
+        "seccion": "A",
+        "nivelId": "1"
+      },
+      {
+        "id": "1777333509077",
+        "ownerId": "admin-1",
+        "nombre": "GALENO",
+        "seccion": "A",
+        "nivelId": "1777333490904"
+      }
+    ],
+    "schedules": [
+      {
+        "id": "1777333789656",
+        "dia": "Lunes",
+        "inicio": "08:00",
+        "fin": "09:00",
+        "materia": "ccccccc",
+        "type": "clase",
+        "targetId": "1776353300853"
+      },
+      {
+        "id": "1777333790995",
+        "dia": "Martes",
+        "inicio": "08:00",
+        "fin": "09:00",
+        "materia": "ccccccc",
+        "type": "clase",
+        "targetId": "1776353300853"
+      },
+      {
+        "id": "1777333794573",
+        "dia": "Martes",
+        "inicio": "07:00",
+        "fin": "09:00",
+        "materia": "ccccccc",
+        "type": "clase",
+        "targetId": "1776353300853"
+      },
+      {
+        "id": "1777333862582",
+        "dia": "Lunes",
+        "inicio": "07:00",
+        "fin": "09:00",
+        "materia": "ccccccc",
+        "type": "clase",
+        "targetId": "1776353300853"
+      },
+      {
+        "id": "1777334044225",
+        "dia": "Lunes",
+        "inicio": "07:00",
+        "fin": "09:00",
+        "materia": "ccccccc",
+        "type": "clase",
+        "targetId": "1777333509077"
+      }
+    ],
+    "shifts": [],
+    "sections": [
+      "A",
+      "B",
+      "C",
+      "D",
+      "E",
+      "M"
+    ],
+    "levels": [
+      {
+        "id": "1",
+        "nombre": "Inicial"
+      },
+      {
+        "id": "2",
+        "nombre": "Primaria"
+      },
+      {
+        "id": "3",
+        "nombre": "Secundaria"
+      },
+      {
+        "id": "1777333490904",
+        "ownerId": "admin-1",
+        "nombre": "TESLA"
+      }
+    ],
+    "gradeTypes": [
+      {
+        "id": "1",
+        "name": "Tarea"
+      },
+      {
+        "id": "2",
+        "name": "Examen"
+      },
+      {
+        "id": "3",
+        "name": "Medición"
+      },
+      {
+        "id": "4",
+        "name": "Participación"
+      }
+    ],
+    "timeSlots": [
+      {
+        "id": "1776353319189",
+        "start": "07:00",
+        "end": "09:00"
+      },
+      {
+        "id": "1776353317789",
+        "start": "08:00",
+        "end": "09:00"
+      }
+    ],
+    "schoolDays": [
+      "Lunes",
+      "Martes",
+      "Miércoles"
+    ],
+    "incidenceTypes": [
+      {
+        "id": "1",
+        "name": "Acumulación de tardanzas"
+      },
+      {
+        "id": "2",
+        "name": "Incumplimiento de tareas"
+      },
+      {
+        "id": "3",
+        "name": "Faltas repetidas"
+      },
+      {
+        "id": "4",
+        "name": "Celular en clases"
+      },
+      {
+        "id": "5",
+        "name": "Conducta inapropiada en la institución"
+      }
+    ],
+    "consultationLogs": [],
+    "conductActions": [],
+    "examTypes": [
+      {
+        "id": "1",
+        "name": "Tarea",
+        "maxScore": 20,
+        "pointsPerGood": 2,
+        "pointsPerBad": 0,
+        "pointsPerBlank": 0,
+        "numQuestions": 10,
+        "isIndispensable": false,
+        "divisor": 1
+      },
+      {
+        "id": "2",
+        "name": "Examen Parcial",
+        "maxScore": 20,
+        "pointsPerGood": 1,
+        "pointsPerBad": -0.25,
+        "pointsPerBlank": 0,
+        "numQuestions": 20,
+        "isIndispensable": true,
+        "divisor": 1
+      }
+    ]
+  },
+  "1776352826981": {
+    "students": [
+      {
+        "id": "1776352848197",
+        "ownerId": "1776352826981",
+        "nombre": "San",
+        "apellido": "De Porres",
+        "dni": "70156570",
+        "nivel": "Primaria",
+        "grado": "",
+        "seccion": "A",
+        "schoolName": "",
+        "studentPhone": "",
+        "registrationDate": "2026-04-16",
+        "rol": "Estudiante",
+        "celularApoderado": "",
+        "email": "sanmartindeporres79@gmail.com",
+        "siteName": "",
+        "slogan": ""
+      }
+    ],
+    "attendance": [
+      {
+        "id": "1776352860050",
+        "ownerId": "1776352826981",
+        "studentDni": "70156570",
+        "studentId": "1776352848197",
+        "studentName": "San De Porres",
+        "studentRol": "Estudiante",
+        "estado": "salida",
+        "fecha": "16/4/2026",
+        "hora": "10:21:03 a. m.",
+        "horaEntrada": "10:21:00 a. m.",
+        "horaSalida": "10:21:03 a. m."
+      }
+    ],
+    "grades": [],
+    "incidences": [],
+    "courses": [
+      {
+        "id": "1776353370651",
+        "name": "aqaaaa",
+        "color": "#f59e0b",
+        "ownerId": "1776352826981"
+      }
+    ],
+    "gradeLevels": [],
+    "schedules": [],
+    "shifts": [],
+    "sections": [
+      "A",
+      "B",
+      "C",
+      "D",
+      "E"
+    ],
+    "levels": [
+      {
+        "id": "1",
+        "nombre": "Inicial"
+      },
+      {
+        "id": "2",
+        "nombre": "Primaria"
+      },
+      {
+        "id": "3",
+        "nombre": "Secundaria"
+      }
+    ],
+    "gradeTypes": [
+      {
+        "id": "1",
+        "name": "Tarea"
+      },
+      {
+        "id": "2",
+        "name": "Examen"
+      },
+      {
+        "id": "3",
+        "name": "Medición"
+      },
+      {
+        "id": "4",
+        "name": "Participación"
+      }
+    ],
+    "timeSlots": [],
+    "schoolDays": [
+      "Lunes",
+      "Martes",
+      "Miércoles",
+      "Jueves",
+      "Viernes"
+    ],
+    "incidenceTypes": [
+      {
+        "id": "1",
+        "name": "Acumulación de tardanzas"
+      },
+      {
+        "id": "2",
+        "name": "Incumplimiento de tareas"
+      },
+      {
+        "id": "3",
+        "name": "Faltas repetidas"
+      },
+      {
+        "id": "4",
+        "name": "Celular en clases"
+      },
+      {
+        "id": "5",
+        "name": "Conducta inapropiada en la institución"
+      }
+    ],
+    "consultationLogs": [],
+    "conductActions": [],
+    "examTypes": [
+      {
+        "id": "1",
+        "name": "Tarea",
+        "maxScore": 20,
+        "pointsPerGood": 2,
+        "pointsPerBad": 0,
+        "pointsPerBlank": 0,
+        "numQuestions": 10,
+        "isIndispensable": false,
+        "divisor": 1
+      },
+      {
+        "id": "2",
+        "name": "Examen Parcial",
+        "maxScore": 20,
+        "pointsPerGood": 1,
+        "pointsPerBad": -0.25,
+        "pointsPerBlank": 0,
+        "numQuestions": 20,
+        "isIndispensable": true,
+        "divisor": 1
+      },
+      {
+        "id": "3",
+        "name": "Examen Final",
+        "maxScore": 20,
+        "pointsPerGood": 1,
+        "pointsPerBad": -0.25,
+        "pointsPerBlank": 0,
+        "numQuestions": 20,
+        "isIndispensable": true,
+        "divisor": 1
+      },
+      {
+        "id": "4",
+        "name": "Participación",
+        "maxScore": 20,
+        "pointsPerGood": 1,
+        "pointsPerBad": 0,
+        "pointsPerBlank": 0,
+        "numQuestions": 20,
+        "isIndispensable": false,
+        "divisor": 1
+      }
+    ]
+  },
+  "1776359174523": {
+    "students": [
+      {
+        "id": "1776359202251",
+        "ownerId": "1776359174523",
+        "nombre": "San",
+        "apellido": "De Porres",
+        "dni": "70156570",
+        "nivel": "Primaria",
+        "grado": "",
+        "seccion": "A",
+        "schoolName": "",
+        "studentPhone": "",
+        "registrationDate": "2026-04-16",
+        "rol": "Estudiante",
+        "celularApoderado": "",
+        "email": "sanmartindeporres79@gmail.com",
+        "siteName": "",
+        "slogan": ""
+      }
+    ],
+    "attendance": [],
+    "grades": [],
+    "incidences": [],
+    "courses": [
+      {
+        "id": "1776353327381",
+        "name": "ccccccc",
+        "color": "#3b82f6",
+        "ownerId": "admin-1"
+      }
+    ],
+    "gradeLevels": [],
+    "schedules": [],
+    "shifts": [],
+    "sections": [
+      "A",
+      "B",
+      "C",
+      "D",
+      "E"
+    ],
+    "levels": [
+      {
+        "id": "1",
+        "nombre": "Inicial"
+      },
+      {
+        "id": "2",
+        "nombre": "Primaria"
+      },
+      {
+        "id": "3",
+        "nombre": "Secundaria"
+      }
+    ],
+    "gradeTypes": [
+      {
+        "id": "1",
+        "name": "Tarea"
+      },
+      {
+        "id": "2",
+        "name": "Examen"
+      },
+      {
+        "id": "3",
+        "name": "Medición"
+      },
+      {
+        "id": "4",
+        "name": "Participación"
+      }
+    ],
+    "timeSlots": [
+      {
+        "id": "1776353319189",
+        "start": "07:00",
+        "end": "09:00"
+      },
+      {
+        "id": "1776353317789",
+        "start": "08:00",
+        "end": "09:00"
+      }
+    ],
+    "schoolDays": [
+      "Lunes",
+      "Martes",
+      "Miércoles"
+    ],
+    "incidenceTypes": [
+      {
+        "id": "1",
+        "name": "Acumulación de tardanzas"
+      },
+      {
+        "id": "2",
+        "name": "Incumplimiento de tareas"
+      },
+      {
+        "id": "3",
+        "name": "Faltas repetidas"
+      },
+      {
+        "id": "4",
+        "name": "Celular en clases"
+      },
+      {
+        "id": "5",
+        "name": "Conducta inapropiada en la institución"
+      }
+    ],
+    "consultationLogs": [],
+    "conductActions": [],
+    "examTypes": [
+      {
+        "id": "1",
+        "name": "Tarea",
+        "maxScore": 20,
+        "pointsPerGood": 2,
+        "pointsPerBad": 0,
+        "pointsPerBlank": 0,
+        "numQuestions": 10,
+        "isIndispensable": false,
+        "divisor": 1
+      },
+      {
+        "id": "2",
+        "name": "Examen Parcial",
+        "maxScore": 20,
+        "pointsPerGood": 1,
+        "pointsPerBad": -0.25,
+        "pointsPerBlank": 0,
+        "numQuestions": 20,
+        "isIndispensable": true,
+        "divisor": 1
+      }
+    ]
+  }
+}
