@@ -6,58 +6,43 @@ import { fileURLToPath } from "url";
 import { WebSocketServer, WebSocket } from "ws";
 import { createServer } from "http";
 import { GoogleGenAI } from "@google/genai";
-import { createClient } from "@supabase/supabase-js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Supabase Configuration
-const supabaseUrl = process.env.VITE_SUPABASE_URL || "https://chotldwdxrbzovmmtnsh.supabase.co";
-const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNob3RsZHdkeHJiem92bW10bnNoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgxNzUzMzIsImV4cCI6MjA5Mzc1MTMzMn0.EME9M9cSy9FvfHvcx2gMPkp1H5Dj4YaKufPRsAyon8Tf";
-const supabase = createClient(supabaseUrl, supabaseKey);
-
-// Helper to read/write from Supabase (Persistent Storage)
-const readFromSupabase = async (key: string, defaultVal: any = []) => {
-  try {
-    const { data, error } = await supabase
-      .from('app_persistence')
-      .select('data')
-      .eq('key', key)
-      .single();
-
-    if (error) {
-      if (error.code === 'PGRST116') return defaultVal; // Not found
-      console.error(`Supabase read error for ${key}:`, error);
-      return defaultVal;
-    }
-    return data?.data || defaultVal;
-  } catch (e) {
-    console.error(`Unexpected read error for ${key}:`, e);
-    return defaultVal;
-  }
-};
-
-const writeToSupabase = async (key: string, data: any) => {
-  try {
-    const { error } = await supabase
-      .from('app_persistence')
-      .upsert({ key, data, updated_at: new Date().toISOString() });
-
-    if (error) {
-      console.error(`Supabase write error for ${key}:`, error);
-      throw error;
-    }
-  } catch (e) {
-    console.error(`Unexpected write error for ${key}:`, e);
-    throw e;
-  }
-};
-
-// Keep JSON compatibility layer (Optional: for local migration or fallback)
 const DATA_DIR = path.join(__dirname, "data");
 if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR);
 }
+
+const getFileName = (key: string) => {
+  if (key === 'users') return 'usuarios.json';
+  return `${key}.json`;
+};
+
+// Helper to read/write JSON files
+const readData = async (key: string, defaultVal: any = []) => {
+  const file = path.join(DATA_DIR, getFileName(key));
+  if (!fs.existsSync(file)) return defaultVal;
+  try {
+    const rawData = fs.readFileSync(file, "utf-8");
+    return rawData ? JSON.parse(rawData) : defaultVal;
+  } catch (e) {
+    console.error(`Error parsing JSON from ${file}:`, e);
+    return defaultVal;
+  }
+};
+
+const writeData = async (key: string, data: any) => {
+  try {
+    const file = path.join(DATA_DIR, getFileName(key));
+    const tempFile = path.join(DATA_DIR, `${getFileName(key)}.tmp`);
+    fs.writeFileSync(tempFile, JSON.stringify(data, null, 2));
+    fs.renameSync(tempFile, file);
+  } catch (e) {
+    console.error(`File write error for ${key}:`, e);
+  }
+};
 
 async function startServer() {
   const app = express();
@@ -114,17 +99,17 @@ async function startServer() {
 // API Routes
   app.get("/api/config", async (req, res) => {
     try {
-      const data = await readFromSupabase("config", null);
+      const data = await readData("config", null);
       res.json(data);
     } catch (e) {
       console.error("Failed to read config:", e);
-      res.status(500).json({ error: "Failed to read config" });
+      res.status(500).json({ error: "Failed to read config", details: e instanceof Error ? e.message : String(e) });
     }
   });
 
   app.post("/api/config", async (req, res) => {
     try {
-      await writeToSupabase("config", req.body);
+      await writeData("config", req.body);
       
       // Broadcast config update to ALL connected clients
       const payload = JSON.stringify({ type: "config_update", data: req.body });
@@ -143,7 +128,7 @@ async function startServer() {
 
   app.get("/api/users", async (req, res) => {
     try {
-      res.json(await readFromSupabase("users", []));
+      res.json(await readData("users", []));
     } catch (e) {
       res.status(500).json({ error: "Failed to read users" });
     }
@@ -151,7 +136,7 @@ async function startServer() {
 
   app.post("/api/users", async (req, res) => {
     try {
-      await writeToSupabase("users", req.body);
+      await writeData("users", req.body);
       
       // Broadcast users update to ALL connected clients
       const payload = JSON.stringify({ type: "users_update", data: req.body });
@@ -189,35 +174,27 @@ async function startServer() {
 
   app.get("/api/public/search/:dni", async (req, res) => {
     try {
-      // For public search, we need to find the student across ALL owner data
-      // We fetch all rows starting with 'owner_data:'
-      const { data: allPersistenceRows, error } = await supabase
-        .from('app_persistence')
-        .select('*')
-        .like('key', 'owner_data:%');
-
-      if (error) throw error;
-
+      const allData = await readData("app_data", {});
       const dni = req.params.dni;
       let foundStudent = null;
       let foundOwnerId = null;
-      let ownerData = null;
 
-      for (const row of allPersistenceRows || []) {
-        const data = row.data;
-        const oId = row.key.split(':')[1];
-        if (data && data.students) {
-          const student = data.students.find((s: any) => s.dni === dni);
+      // Search across all users' data
+      for (const ownerId in allData) {
+        const userData = allData[ownerId];
+        if (userData && userData.students) {
+          const student = userData.students.find((s: any) => s.dni === dni);
           if (student) {
             foundStudent = student;
-            foundOwnerId = oId;
-            ownerData = data;
+            foundOwnerId = ownerId;
             break;
           }
         }
       }
 
-      if (foundStudent && ownerData) {
+      if (foundStudent) {
+        // Return the student and the necessary related data (attendance, grades, etc.) from that owner
+        const ownerData = allData[foundOwnerId];
         res.json({
           student: foundStudent,
           attendance: ownerData.attendance || [],
@@ -225,6 +202,7 @@ async function startServer() {
           incidences: ownerData.incidences || [],
           schedules: ownerData.schedules || [],
           ownerId: foundOwnerId,
+          // Include these for ConsultasModal to work correctly with names/colors
           courses: ownerData.courses || [],
           gradeLevels: ownerData.gradeLevels || [],
           examTypes: ownerData.examTypes || [],
@@ -247,17 +225,18 @@ async function startServer() {
         return res.status(400).json({ error: "Missing ownerId or grade" });
       }
 
-      const persistenceKey = `owner_data:${ownerId}`;
-      const data = await readFromSupabase(persistenceKey, null);
-      if (!data) {
+      const allData = await readData("app_data", {});
+      if (!allData[ownerId]) {
         return res.status(404).json({ error: "Owner data not found" });
       }
 
-      if (!data.grades) data.grades = [];
-      data.grades.push(grade);
+      if (!allData[ownerId].grades) allData[ownerId].grades = [];
+      allData[ownerId].grades.push(grade);
 
-      await writeToSupabase(persistenceKey, data);
-      broadcast(ownerId, data);
+      await writeData("app_data", allData);
+      
+      // Broadcast update to all clients in that owner's room
+      broadcast(ownerId, allData[ownerId]);
       
       res.json({ success: true });
     } catch (e) {
@@ -268,8 +247,8 @@ async function startServer() {
 
   app.get("/api/data/:ownerId", async (req, res) => {
     try {
-      const data = await readFromSupabase(`owner_data:${req.params.ownerId}`, {});
-      res.json(data);
+      const allData = await readData("app_data", {});
+      res.json(allData[req.params.ownerId] || {});
     } catch (e) {
       res.status(500).json({ error: "Failed to read data" });
     }
@@ -277,9 +256,13 @@ async function startServer() {
 
   app.post("/api/data/:ownerId", async (req, res) => {
     try {
-      const ownerId = req.params.ownerId;
-      await writeToSupabase(`owner_data:${ownerId}`, req.body);
-      broadcast(ownerId, req.body);
+      const allData = await readData("app_data", {});
+      allData[req.params.ownerId] = req.body;
+      await writeData("app_data", allData);
+      
+      // Broadcast update to other clients in the same room
+      broadcast(req.params.ownerId, req.body);
+      
       res.json({ success: true });
     } catch (e) {
       console.error("Error saving data:", e);
@@ -287,10 +270,10 @@ async function startServer() {
     }
   });
 
-  // Health check for deployment
+  // Health check for deployment - MUST be before Vite middleware
   app.get("/api/health", (req, res) => {
     res.set("Access-Control-Allow-Origin", "*");
-    res.json({ status: "ok", timestamp: new Date().toISOString(), version: "1.1.0-supabase" });
+    res.json({ status: "ok", timestamp: new Date().toISOString(), version: "1.0.1" });
   });
 
   // Vite middleware for development
