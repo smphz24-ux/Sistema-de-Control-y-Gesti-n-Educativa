@@ -172,7 +172,10 @@ const ConsultasModal: React.FC<ConsultasModalProps> = ({
     const buenas = examQuestions ? Array.from({ length: examQuestions }).filter((_, i) => studentAnswersForSheet[i+1] === selectedExamForSheet.answerKey?.[i]).length : 0;
     const malas = examQuestions ? Array.from({ length: examQuestions }).filter((_, i) => studentAnswersForSheet[i+1] && studentAnswersForSheet[i+1] !== '-' && studentAnswersForSheet[i+1] !== selectedExamForSheet.answerKey?.[i]).length : 0;
     const blancas = examQuestions - buenas - malas;
-    const total = (buenas * (selectedExamForSheet.pointsPerGood || 1)) - (malas * (selectedExamForSheet.pointsPerBad || 0));
+    const rawScore = (buenas * (selectedExamForSheet.pointsPerGood || 0)) + 
+                     (malas * (selectedExamForSheet.pointsPerBad || 0)) + 
+                     (blancas * (selectedExamForSheet.pointsPerBlank || 0));
+    const total = selectedExamForSheet.divisor && selectedExamForSheet.divisor > 0 ? rawScore / selectedExamForSheet.divisor : rawScore;
     
     const result = { buenas, malas, blancas, total };
     setExamResult(result);
@@ -192,6 +195,9 @@ const ConsultasModal: React.FC<ConsultasModalProps> = ({
         maxScore: selectedExamForSheet.maxScore,
         pointsPerGood: selectedExamForSheet.pointsPerGood,
         pointsPerBad: selectedExamForSheet.pointsPerBad,
+        pointsPerBlank: selectedExamForSheet.pointsPerBlank,
+        divisor: selectedExamForSheet.divisor || 1,
+        rawScore: rawScore,
         numQuestions: selectedExamForSheet.numQuestions,
         isOpticalSheet: true,
         studentId: consultasResult.id,
@@ -820,7 +826,7 @@ const ConsultasModal: React.FC<ConsultasModalProps> = ({
                         {(examTypes || [])
                           .filter(e => safePub.authorizedExams?.includes(e.id) && e.hasOpticalSheet)
                           .map(exam => {
-                            const isReady = exam.answerKey && exam.answerKey.some(k => k !== '');
+                            const isReady = true; // Always active
                             const existingGrade = studentGrades.find(g => g.examType === exam.id && g.isOpticalSheet);
                             const isCompleted = !!existingGrade;
 

@@ -1,16 +1,21 @@
-import React from 'react';
+import React, { useState, useMemo } from 'react';
 import { 
   Users, 
   UserCheck, 
   Search, 
   BarChart3, 
-  Calendar,
+  Calendar as CalendarIcon,
   Sparkles,
   RefreshCw,
   Clock,
   ArrowUpRight,
   TrendingUp,
-  LayoutGrid
+  LayoutGrid,
+  ChevronLeft,
+  ChevronRight,
+  Cake,
+  User as UserIcon,
+  ArrowRight
 } from 'lucide-react';
 import { 
   ResponsiveContainer, 
@@ -47,27 +52,74 @@ const Dashboard: React.FC<DashboardProps> = ({
   const todayDate = new Date().toLocaleDateString('es-ES', { day: 'numeric', month: 'long', year: 'numeric' });
   
   // Refined Statistics
-  const totalPeopleCount = (students || []).length;
-  const studentCount = (students || []).filter(s => s.rol === 'Estudiante').length;
-  const teacherCount = (students || []).filter(s => s.rol === 'Docente').length;
-  const attendanceToday = (attendance || []).filter(a => a.fecha === new Date().toLocaleDateString()).length;
-  const attendanceRate = totalPeopleCount > 0 ? Math.max(0, Math.min(100, Math.round((attendanceToday / totalPeopleCount) * 100))) : 0;
+  const totalPeopleCount = useMemo(() => (students || []).length, [students]);
+  const studentCount = useMemo(() => (students || []).filter(s => s.rol === 'Estudiante').length, [students]);
+  const teacherCount = useMemo(() => (students || []).filter(s => s.rol === 'Docente').length, [students]);
+  const attendanceToday = useMemo(() => (attendance || []).filter(a => a.fecha === new Date().toLocaleDateString()).length, [attendance]);
+  const attendanceRate = useMemo(() => totalPeopleCount > 0 ? Math.max(0, Math.min(100, Math.round((attendanceToday / totalPeopleCount) * 100))) : 0, [totalPeopleCount, attendanceToday]);
 
   // Chart Data
-  const last7Days = Array.from({ length: 7 }).map((_, i) => {
-    const d = new Date();
-    d.setDate(d.getDate() - (6 - i));
-    const dateStr = d.toLocaleDateString();
-    return {
-      day: d.toLocaleDateString('es-ES', { weekday: 'short' }),
-      count: (attendance || []).filter(a => a.fecha === dateStr).length,
-      fullDate: dateStr
-    };
-  });
+  const last7Days = useMemo(() => {
+    return Array.from({ length: 7 }).map((_, i) => {
+      const d = new Date();
+      d.setDate(d.getDate() - (6 - i));
+      const dateStr = d.toLocaleDateString();
+      return {
+        day: d.toLocaleDateString('es-ES', { weekday: 'short' }),
+        count: (attendance || []).filter(a => a.fecha === dateStr).length,
+        fullDate: dateStr
+      };
+    });
+  }, [attendance]);
 
-  const recentActivity = [...(attendance || [])]
+  const recentActivity = useMemo(() => [...(attendance || [])]
     .sort((a, b) => b.hora.localeCompare(a.hora))
-    .slice(0, 5);
+    .slice(0, 5), [attendance]);
+
+  const [currentCalendarDate, setCurrentCalendarDate] = useState(new Date());
+  const [selectedBirthdayDate, setSelectedBirthdayDate] = useState<string | null>(null);
+
+  const daysInMonth = (date: Date) => {
+    return new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
+  };
+
+  const firstDayOfMonth = (date: Date) => {
+    return new Date(date.getFullYear(), date.getMonth(), 1).getDay();
+  };
+
+  const monthNames = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
+
+  const studentsWithBirthdays = useMemo(() => {
+    return students.filter(s => s.fechaNacimiento);
+  }, [students]);
+
+  const birthdayPeopleMap = useMemo(() => {
+    const map: Record<string, Student[]> = {};
+    studentsWithBirthdays.forEach(s => {
+      if (s.fechaNacimiento && s.fechaNacimiento.includes('-')) {
+        // Date format is YYYY-MM-DD
+        const parts = s.fechaNacimiento.split('-');
+        if (parts.length >= 3) {
+          const month = parts[1];
+          const day = parts[2];
+          const dateKey = `${parseInt(day)}-${parseInt(month)}`; // day-month
+          if (!map[dateKey]) map[dateKey] = [];
+          map[dateKey].push(s);
+        }
+      }
+    });
+    return map;
+  }, [studentsWithBirthdays]);
+
+  const birthdayPeople = selectedBirthdayDate ? (birthdayPeopleMap[selectedBirthdayDate] || []) : [];
+
+  const handlePrevMonth = () => {
+    setCurrentCalendarDate(new Date(currentCalendarDate.getFullYear(), currentCalendarDate.getMonth() - 1, 1));
+  };
+
+  const handleNextMonth = () => {
+    setCurrentCalendarDate(new Date(currentCalendarDate.getFullYear(), currentCalendarDate.getMonth() + 1, 1));
+  };
 
   return (
     <div className="max-w-7xl mx-auto p-6 md:p-10 space-y-10 min-h-screen bg-slate-50/50">
@@ -202,79 +254,159 @@ const Dashboard: React.FC<DashboardProps> = ({
               </ResponsiveContainer>
             </div>
           </div>
-        </div>
-
-        {/* Right Column: AI & Activity */}
-        <div className="md:col-span-4 space-y-8">
+        </div>        {/* Right Column: Calendar & Activity */}
+        <div className="md:col-span-4 space-y-4 lg:space-y-6 flex flex-col h-full">
           
-          {/* AI Sensei Card */}
-          <motion.div 
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="bg-indigo-600 p-8 rounded-[3rem] text-white shadow-2xl shadow-indigo-200 relative overflow-hidden group h-fit"
-          >
-            <div className="absolute -top-10 -right-10 w-48 h-48 bg-white/10 rounded-full blur-3xl group-hover:bg-white/20 transition-all" />
-            
-            <div className="relative z-10 space-y-6">
-              <div className="flex justify-between items-center">
-                <div className="flex items-center gap-3">
-                  <div className="p-3 bg-white/20 rounded-2xl backdrop-blur-md">
-                    <Sparkles className="text-amber-300" size={20} />
-                  </div>
-                  <div>
-                    <h5 className="font-black text-sm uppercase tracking-tight">AI Assistant</h5>
-                    <p className="text-[8px] font-bold text-white/50 uppercase tracking-widest">Análisis Predictivo</p>
-                  </div>
+          {/* Birthday Calendar Card */}
+          <div className="bg-white p-4 lg:p-6 rounded-[2rem] border border-slate-100 shadow-sm overflow-hidden flex flex-col min-h-fit">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 bg-pink-50 rounded-lg">
+                  <Cake className="text-pink-500" size={16} />
                 </div>
-                <button 
-                  onClick={generateAiReport}
-                  disabled={isAiLoading}
-                  className="p-3 bg-white/10 hover:bg-white/20 rounded-xl transition-all disabled:opacity-50"
-                >
-                  <RefreshCw size={18} className={isAiLoading ? "animate-spin" : ""} />
+                <h3 className="text-[10px] lg:text-xs font-black text-slate-800 uppercase tracking-tight">Cumpleaños</h3>
+              </div>
+              <div className="flex items-center gap-1">
+                <button onClick={handlePrevMonth} className="p-1 hover:bg-slate-50 rounded-md transition-all">
+                  <ChevronLeft size={14} className="text-slate-400" />
+                </button>
+                <button onClick={handleNextMonth} className="p-1 hover:bg-slate-50 rounded-md transition-all">
+                  <ChevronRight size={14} className="text-slate-400" />
                 </button>
               </div>
+            </div>
 
-              <div className="min-h-[100px] flex flex-col justify-center">
-                {isAiLoading ? (
-                  <div className="space-y-3">
-                    <div className="h-1 w-full bg-white/10 rounded-full overflow-hidden">
-                      <motion.div 
-                        initial={{ x: "-100%" }}
-                        animate={{ x: "100%" }}
-                        transition={{ duration: 1.5, repeat: Infinity, ease: "linear" }}
-                        className="h-full bg-white"
-                      />
+            <div className="space-y-2 text-center">
+              <p className="text-[8px] lg:text-[9px] font-black text-indigo-600 uppercase tracking-[0.2em] bg-indigo-50 py-1.5 rounded-lg mb-1">
+                {monthNames[currentCalendarDate.getMonth()]} {currentCalendarDate.getFullYear()}
+              </p>
+
+              <div className="grid grid-cols-7 border border-slate-100 rounded-xl overflow-hidden shadow-sm">
+                {["D", "L", "M", "M", "J", "V", "S"].map((d, i) => (
+                  <div key={`${d}-${i}`} className="text-[7px] font-black text-slate-400 py-1.5 bg-slate-50 border-b border-slate-100 uppercase">{d}</div>
+                ))}
+                
+                {Array.from({ length: firstDayOfMonth(currentCalendarDate) }).map((_, i) => (
+                  <div key={`empty-${i}`} className="bg-slate-50/20 border-b border-r border-slate-50 last:border-r-0" />
+                ))}
+
+                {Array.from({ length: daysInMonth(currentCalendarDate) }).map((_, i) => {
+                  const day = i + 1;
+                  const month = currentCalendarDate.getMonth() + 1;
+                  const dateKey = `${day}-${month}`;
+                  const hasBirthdays = !!birthdayPeopleMap[dateKey];
+                  const isSelected = selectedBirthdayDate === dateKey;
+                  const isToday = day === new Date().getDate() && month === (new Date().getMonth() + 1);
+                  
+                  const weekNum = Math.floor((day + firstDayOfMonth(currentCalendarDate) - 1) / 7);
+                  const isEvenWeek = weekNum % 2 === 0;
+
+                  return (
+                    <button
+                      key={day}
+                      onClick={() => setSelectedBirthdayDate(dateKey)}
+                      className={`
+                        aspect-square flex flex-col items-center justify-center text-[10px] transition-all relative border-b border-r border-slate-50 last:border-r-0
+                        ${isEvenWeek ? 'bg-white' : 'bg-slate-50/20'}
+                        ${hasBirthdays ? 'bg-rose-50 !font-black z-10 ring-1 ring-inset ring-rose-200 shadow-sm' : 'text-slate-600 font-medium'}
+                        ${isSelected ? '!bg-indigo-600 !text-white shadow-xl scale-[1.15] z-20 rounded-lg !border-none ring-2 ring-white ring-offset-2 ring-offset-indigo-100' : ''}
+                        ${isToday && !isSelected && !hasBirthdays ? 'bg-amber-100 text-amber-900 font-black ring-1 ring-amber-300 ring-inset' : ''}
+                        ${!isSelected ? 'hover:bg-indigo-50 hover:text-indigo-600 hover:z-10' : ''}
+                      `}
+                    >
+                      {hasBirthdays ? (
+                        <div className="flex flex-col items-center justify-center leading-none pt-0.5">
+                          <Cake size={16} className={`${isSelected ? 'text-white drop-shadow-sm' : 'text-rose-600'} mb-0.5`} />
+                          <span className={`text-[12px] font-black tracking-tight ${isSelected ? 'text-white' : 'text-rose-800'}`}>{day}</span>
+                        </div>
+                      ) : (
+                        <span className="relative z-10 font-bold">{day}</span>
+                      )}
+                      
+                      {hasBirthdays && !isSelected && (
+                        <div className="absolute top-1 right-1 w-1.5 h-1.5 bg-rose-500 rounded-full shadow-[0_0_4px_rgba(244,63,94,0.6)] animate-pulse z-20" />
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="pt-2 border-t border-slate-50 min-h-[50px]">
+                <AnimatePresence mode="wait">
+                  {selectedBirthdayDate ? (
+                    <motion.div
+                      key={selectedBirthdayDate}
+                      initial={{ opacity: 0, scale: 0.95 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.95 }}
+                      className="space-y-2"
+                    >
+                      <div className="space-y-1.5 max-h-[140px] overflow-y-auto no-scrollbar pr-1">
+                        {birthdayPeople.length > 0 ? birthdayPeople.map((p, idx) => (
+                          <div 
+                            key={idx} 
+                            className={`
+                              flex items-center gap-2 p-2 rounded-xl border transition-all
+                              ${p.rol === 'Docente' 
+                                ? 'bg-emerald-50/50 border-emerald-100' 
+                                : 'bg-sky-50/50 border-sky-100'}
+                            `}
+                          >
+                            <div className="w-7 h-7 rounded-full bg-white flex items-center justify-center overflow-hidden border border-slate-100 shrink-0">
+                              {p.foto ? <img src={p.foto} className="w-full h-full object-cover" /> : <UserIcon size={12} className="text-slate-300" />}
+                            </div>
+                            <div className="text-left overflow-hidden flex-1">
+                              <p className={`text-[9px] font-black uppercase leading-tight truncate ${p.rol === 'Docente' ? 'text-emerald-700' : 'text-sky-700'}`}>
+                                {p.nombre} {p.apellido}
+                              </p>
+                              <div className="flex items-center gap-1.5 mt-0.5">
+                                <span className="text-[7px] font-bold text-slate-400 uppercase shrink-0">DNI: {p.dni}</span>
+                                <span className="w-0.5 h-0.5 bg-slate-200 rounded-full" />
+                                <span className={`text-[7px] font-black uppercase truncate ${p.rol === 'Docente' ? 'text-emerald-500/70' : 'text-sky-500/70'}`}>
+                                  {p.rol === 'Docente' ? 'PROFE' : p.grado}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        )) : (
+                          <div className="py-2 opacity-20">
+                            <Cake size={16} className="mx-auto text-slate-300" />
+                            <p className="text-[7px] font-black uppercase text-slate-400 mt-1">Nadie cumple hoy</p>
+                          </div>
+                        )}
+                      </div>
+                    </motion.div>
+                  ) : (
+                    <div className="flex flex-col items-center justify-center py-4 space-y-1.5 opacity-30">
+                      <CalendarIcon size={18} className="text-slate-300" />
+                      <p className="text-[7px] font-black text-slate-400 uppercase tracking-widest text-center">Selecciona un día</p>
                     </div>
-                    <p className="text-[9px] font-bold text-white/40 uppercase text-center animate-pulse">Sincronizando datos...</p>
-                  </div>
-                ) : (
-                  <p className="text-sm font-medium leading-relaxed opacity-90 italic">
-                    {aiReport || "Haz clic en el icono para generar un análisis inteligente de la jornada actual."}
-                  </p>
-                )}
+                  )}
+                </AnimatePresence>
               </div>
             </div>
-          </motion.div>
+          </div>
 
           {/* Activity List Card */}
-          <div className="bg-white p-8 rounded-[3rem] border border-slate-100 shadow-sm grow">
-            <div className="flex items-center gap-3 mb-8">
-              <Clock className="text-slate-400" size={20} />
-              <h3 className="text-sm font-black text-slate-900 uppercase tracking-tight">Actividad Reciente</h3>
+          <div className="bg-white p-4 lg:p-6 rounded-[2rem] border border-slate-100 shadow-sm flex flex-col flex-1 min-h-[250px]">
+            <div className="flex items-center gap-2 mb-4">
+              <div className="p-1.5 bg-slate-50 rounded-lg text-slate-400">
+                <Clock size={16} />
+              </div>
+              <h3 className="text-[10px] lg:text-xs font-black text-slate-800 uppercase tracking-tight">Actividad</h3>
             </div>
 
-            <div className="space-y-6">
+            <div className="space-y-3 flex-1 overflow-y-auto no-scrollbar pr-1">
               {recentActivity.length > 0 ? (
                 recentActivity.map((item, idx) => (
-                  <div key={idx} className="flex items-start gap-4 group">
-                    <div className={`w-2 h-2 rounded-full mt-2 shrink-0 ${item.estado === 'entrada' ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+                  <div key={idx} className="flex items-start gap-2.5 group">
+                    <div className={`w-1.5 h-1.5 rounded-full mt-1.5 shrink-0 ${item.estado === 'entrada' ? 'bg-emerald-500' : 'bg-amber-500'}`} />
                     <div className="flex-1 min-w-0">
-                      <p className="text-xs font-black text-slate-800 uppercase truncate">{item.studentName}</p>
-                      <div className="flex items-center gap-2 mt-1">
-                        <span className="text-[9px] font-bold text-slate-400">{item.hora}</span>
-                        <span className="w-1 h-1 rounded-full bg-slate-200" />
-                        <span className={`text-[9px] font-black uppercase tracking-widest ${item.estado === 'entrada' ? 'text-emerald-600' : 'text-amber-600'}`}>
+                      <p className="text-[9px] lg:text-[10px] font-black text-slate-700 uppercase truncate leading-none">{item.studentName}</p>
+                      <div className="flex items-center gap-1.5 mt-1">
+                        <span className="text-[7px] font-bold text-slate-400">{item.hora}</span>
+                        <span className="w-0.5 h-0.5 rounded-full bg-slate-200" />
+                        <span className={`text-[7px] font-black uppercase tracking-widest ${item.estado === 'entrada' ? 'text-emerald-500' : 'text-amber-500'}`}>
                           {item.estado}
                         </span>
                       </div>
@@ -282,20 +414,19 @@ const Dashboard: React.FC<DashboardProps> = ({
                   </div>
                 ))
               ) : (
-                <div className="py-10 text-center space-y-3 opacity-30">
-                  <Clock size={32} className="mx-auto text-slate-300" />
-                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Sin actividad hoy</p>
+                <div className="py-6 text-center space-y-2 opacity-20">
+                  <Clock size={20} className="mx-auto text-slate-300" />
+                  <p className="text-[8px] font-black uppercase tracking-widest text-slate-400">Sin movimientos</p>
                 </div>
               )}
             </div>
 
             {recentActivity.length > 0 && (
-              <button className="w-full mt-8 py-4 border border-dashed border-slate-200 rounded-2xl text-[10px] font-black text-slate-400 uppercase tracking-widest hover:border-indigo-200 hover:text-indigo-500 transition-all">
-                Ver Historial Completo
+              <button className="w-full mt-4 py-2.5 border border-dashed border-slate-200 rounded-xl text-[8px] font-black text-slate-400 uppercase tracking-widest hover:border-indigo-200 hover:text-indigo-500 hover:bg-indigo-50/30 transition-all flex items-center justify-center gap-2">
+                Ver Historial <ArrowRight size={10} />
               </button>
             )}
           </div>
-
         </div>
 
       </div>

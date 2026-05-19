@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { 
   LayoutDashboard, 
   Users, 
@@ -14,9 +14,11 @@ import {
   ChevronLeft,
   ChevronRight,
   Pin,
-  PinOff
+  PinOff,
+  Bell
 } from 'lucide-react';
-import { User, AppConfig } from '../types';
+import { User, AppConfig, Student } from '../types';
+import { motion, AnimatePresence } from 'motion/react';
 
 interface SidebarProps {
   activeTab: string;
@@ -29,6 +31,7 @@ interface SidebarProps {
   navItems: { id: string, icon: any, label: string }[];
   originalUser?: User | null;
   onBackToOriginal?: () => void;
+  students?: Student[];
 }
 
 const Sidebar: React.FC<SidebarProps> = ({
@@ -41,12 +44,69 @@ const Sidebar: React.FC<SidebarProps> = ({
   onLogout,
   navItems,
   originalUser,
-  onBackToOriginal
+  onBackToOriginal,
+  students = []
 }) => {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [isPinned, setIsPinned] = useState(false); 
   const [isHovered, setIsHovered] = useState(false);
   const collapseTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const birthdayNotification = useMemo(() => {
+    if (!students || students.length === 0) return null;
+    
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const tomorrow = new Date(today);
+    tomorrow.setDate(today.getDate() + 1);
+    
+    const startOfWeek = new Date(today);
+    startOfWeek.setDate(today.getDate() - today.getDay());
+    const endOfWeek = new Date(startOfWeek);
+    endOfWeek.setDate(startOfWeek.getDate() + 6);
+    
+    let monthCount = 0;
+    let weekCount = 0;
+    let hasTomorrow = false;
+    let hasToday = false;
+    
+    students.forEach(s => {
+      if (!s.fechaNacimiento) return;
+      
+      // Date format is YYYY-MM-DD
+      const [_, monthStr, dayStr] = s.fechaNacimiento.split('-');
+      const bMonth = parseInt(monthStr) - 1;
+      const bDay = parseInt(dayStr);
+      
+      const bDateThisYear = new Date(today.getFullYear(), bMonth, bDay);
+      
+      // Month check
+      if (bMonth === today.getMonth()) {
+        monthCount++;
+        
+        // Week check
+        if (bDateThisYear >= startOfWeek && bDateThisYear <= endOfWeek) {
+          weekCount++;
+        }
+        
+        // Day check
+        if (bMonth === today.getMonth() && bDay === today.getDate()) {
+          hasToday = true;
+        } else if (bMonth === tomorrow.getMonth() && bDay === tomorrow.getDate()) {
+          hasTomorrow = true;
+        }
+      }
+    });
+    
+    if (monthCount === 0) return null;
+    
+    return {
+      monthCount,
+      weekCount,
+      hasTomorrow,
+      hasToday
+    };
+  }, [students]);
 
   const startCollapseTimer = useCallback(() => {
     if (collapseTimerRef.current) clearTimeout(collapseTimerRef.current);
@@ -171,11 +231,61 @@ const Sidebar: React.FC<SidebarProps> = ({
                 setIsMobileMenuOpen(false);
                 resetCollapseTimer(); 
               }}
-              className={`w-full flex items-center transition-all group overflow-hidden ${showFull ? 'gap-4 px-6 py-4 rounded-2xl' : 'justify-center p-4 rounded-xl'} ${activeTab === item.id ? 'bg-white text-slate-900 shadow-xl scale-105' : 'text-slate-400 hover:bg-white/5 hover:text-white'}`}
+              className={`w-full flex items-center transition-all group relative ${showFull ? 'gap-4 px-6 py-4 rounded-2xl' : 'justify-center p-4 rounded-xl'} ${activeTab === item.id ? 'bg-white text-slate-900 shadow-xl scale-105' : 'text-slate-400 hover:bg-white/5 hover:text-white'}`}
               title={item.label}
             >
               <item.icon size={20} className={`shrink-0 ${activeTab === item.id ? '' : 'group-hover:text-white'}`} style={activeTab === item.id ? { color: 'var(--primary-color)' } : {}} />
               {showFull && <span className="text-[11px] font-black uppercase tracking-widest truncate">{item.label}</span>}
+              
+              {/* Birthday Notification Bell for Dashboard */}
+              {item.id === 'dashboard' && birthdayNotification && (
+                <div className={`
+                  ${showFull ? 'ml-auto translate-x-1' : 'absolute top-0 right-0 -translate-x-1 translate-y-1'} 
+                  flex items-center justify-center pointer-events-none z-20
+                `}>
+                  <motion.div
+                    animate={birthdayNotification.hasToday ? {
+                      rotate: [0, -15, 15, -15, 15, 0],
+                      scale: [1, 1.15, 1],
+                    } : {}}
+                    transition={birthdayNotification.hasToday ? {
+                      duration: 0.5,
+                      repeat: Infinity,
+                      repeatDelay: 0.2
+                    } : {}}
+                    className={`
+                      relative flex items-center justify-center
+                      ${birthdayNotification.hasToday ? 'text-emerald-400' : ''}
+                      ${!birthdayNotification.hasToday && birthdayNotification.hasTomorrow ? 'text-red-500' : ''}
+                      ${!birthdayNotification.hasToday && !birthdayNotification.hasTomorrow && birthdayNotification.weekCount > 0 ? 'text-orange-500' : ''}
+                      ${!birthdayNotification.hasToday && !birthdayNotification.hasTomorrow && birthdayNotification.weekCount === 0 && birthdayNotification.monthCount > 0 ? 'text-emerald-600/50' : ''}
+                    `}
+                  >
+                    <Bell 
+                      size={showFull ? 24 : 20} 
+                      fill="currentColor" 
+                      className={`
+                        ${birthdayNotification.hasToday ? "text-green-400 drop-shadow-[0_0_15px_rgba(34,197,94,0.8)]" : ""}
+                        ${!birthdayNotification.hasToday && birthdayNotification.hasTomorrow ? "drop-shadow-[0_0_10px_rgba(239,68,68,0.4)]" : ""}
+                        ${!birthdayNotification.hasToday && !birthdayNotification.hasTomorrow && birthdayNotification.weekCount > 0 ? "drop-shadow-[0_0_10px_rgba(249,115,22,0.4)]" : ""}
+                        ${!birthdayNotification.hasToday && !birthdayNotification.hasTomorrow && birthdayNotification.weekCount === 0 && birthdayNotification.monthCount > 0 ? "drop-shadow-[0_0_10px_rgba(16,185,129,0.3)]" : ""}
+                      `} 
+                    />
+                    
+                    {birthdayNotification.weekCount > 0 && (
+                      <span className={`
+                        absolute inset-0 flex items-center justify-center font-black leading-none
+                        ${showFull ? 'text-[11px] pb-[6px]' : 'text-[9px] pb-[5px]'}
+                        ${birthdayNotification.hasToday ? 'text-green-950' : 'text-white'}
+                        drop-shadow-[0_1px_1px_rgba(0,0,0,0.2)]
+                      `}>
+                        {birthdayNotification.weekCount}
+                      </span>
+                    )}
+                  </motion.div>
+                </div>
+              )}
+
               {!showFull && activeTab === item.id && (
                 <div className="absolute left-0 w-1 h-6 bg-blue-500 rounded-r-full" />
               )}

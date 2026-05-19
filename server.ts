@@ -10,9 +10,9 @@ import { GoogleGenAI } from "@google/genai";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const DATA_DIR = path.join(__dirname, "data");
+const DATA_DIR = path.join(process.cwd(), "data");
 if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR);
+  fs.mkdirSync(DATA_DIR, { recursive: true });
 }
 
 const getFileName = (key: string) => {
@@ -175,26 +175,44 @@ async function startServer() {
   app.get("/api/public/search/:dni", async (req, res) => {
     try {
       const allData = await readData("app_data", {});
-      const dni = req.params.dni;
+      const dni = (req.params.dni || "").trim();
+      
+      console.log(`Searching for student with DNI: "${dni}"`);
+
       let foundStudent = null;
       let foundOwnerId = null;
 
       // Search across all users' data
       for (const ownerId in allData) {
         const userData = allData[ownerId];
-        if (userData && userData.students) {
-          const student = userData.students.find((s: any) => s.dni === dni);
+        if (userData && userData.students && Array.isArray(userData.students)) {
+          const student = userData.students.find((s: any) => {
+            if (!s || !s.dni) return false;
+            const studentDni = String(s.dni).trim();
+            const searchDni = dni.trim();
+            
+            if (studentDni === searchDni) return true;
+            
+            // Handle cases where leading zeros might be missing in database (e.g. stored as number)
+            // or vice versa. Pad both to 8 digits if they are purely numeric.
+            const isNumeric = /^\d+$/.test(studentDni) && /^\d+$/.test(searchDni);
+            if (isNumeric) {
+              return studentDni.padStart(8, '0') === searchDni.padStart(8, '0');
+            }
+            return false;
+          });
+          
           if (student) {
             foundStudent = student;
             foundOwnerId = ownerId;
+            console.log(`Found student ${student.nombre} ${student.apellido} for owner ${ownerId}`);
             break;
           }
         }
       }
 
       if (foundStudent) {
-        // Return the student and the necessary related data (attendance, grades, etc.) from that owner
-        const ownerData = allData[foundOwnerId];
+        const ownerData = allData[foundOwnerId] || {};
         res.json({
           student: foundStudent,
           attendance: ownerData.attendance || [],
@@ -202,7 +220,6 @@ async function startServer() {
           incidences: ownerData.incidences || [],
           schedules: ownerData.schedules || [],
           ownerId: foundOwnerId,
-          // Include these for ConsultasModal to work correctly with names/colors
           courses: ownerData.courses || [],
           gradeLevels: ownerData.gradeLevels || [],
           examTypes: ownerData.examTypes || [],
@@ -210,6 +227,7 @@ async function startServer() {
           schoolDays: ownerData.schoolDays || []
         });
       } else {
+        console.log(`Student with DNI "${dni}" not found in any database.`);
         res.status(404).json({ error: "Student not found" });
       }
     } catch (e) {
@@ -285,9 +303,10 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    app.use(express.static(path.join(__dirname, "dist")));
+    const distPath = path.join(process.cwd(), "dist");
+    app.use(express.static(distPath));
     app.get("*all", (req, res) => {
-      res.sendFile(path.join(__dirname, "dist", "index.html"));
+      res.sendFile(path.join(distPath, "index.html"));
     });
   }
 

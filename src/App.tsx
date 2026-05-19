@@ -76,6 +76,8 @@ import {
   Globe,
   Lock,
   Menu,
+  RotateCcw,
+  ChevronDown,
   ArrowLeft,
   ArrowRight,
   Share2,
@@ -414,7 +416,9 @@ const App = () => {
   const [calificacionesSearch, setCalificacionesSearch] = useState("");
   const [calificacionesMateriaFilter, setCalificacionesMateriaFilter] =
     useState("");
-  const [calificacionesExamenFilter, setCalificacionesExamenFilter] = useState("");
+  const [calificacionesExamenFilter, setCalificacionesExamenFilter] = useState<string[]>([]);
+  const [isExamFilterOpen, setIsExamFilterOpen] = useState(false);
+  const [showAllStudentsInRegistros, setShowAllStudentsInRegistros] = useState(false);
   const [calificacionesDateFilter, setCalificacionesDateFilter] = useState("");
   const [boletasSortOrder, setBoletasSortOrder] = useState<
     "merito" | "demerito"
@@ -782,6 +786,7 @@ const App = () => {
       isIndispensable: et?.isIndispensable,
       divisor: et?.divisor || 1,
       rawScore: calculatedScore.rawScore,
+      isOpticalSheet: true,
     };
     setGrades((prev) => [...prev, newGrade]);
     setToast({ message: "Guardado Correctamente", type: "success" });
@@ -1338,11 +1343,10 @@ const App = () => {
         };
       });
 
-    const { utils, writeFile } = await import("xlsx");
-    const worksheet = utils.json_to_sheet(filteredStudents);
-    const workbook = utils.book_new();
-    utils.book_append_sheet(workbook, worksheet, "Boletas");
-    writeFile(workbook, `boletas_${new Date().getTime()}.xlsx`);
+    const worksheet = XLSX.utils.json_to_sheet(filteredStudents);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Boletas");
+    XLSX.writeFile(workbook, `boletas_${new Date().getTime()}.xlsx`);
     setToast({ message: "Excel exportado con éxito", type: "success" });
   };
 
@@ -1357,10 +1361,8 @@ const App = () => {
     setShowBoletaDownloadOptions(false);
 
     try {
-      const { toPng } = await import("html-to-image");
-
       // Capture with a fixed width to ensure consistency
-      const dataUrl = await toPng(boletaRef.current, {
+      const dataUrl = await htmlToImage.toPng(boletaRef.current, {
         quality: 1,
         pixelRatio: 2, // 2 is usually enough for A4
         backgroundColor: "#ffffff",
@@ -2151,12 +2153,14 @@ const App = () => {
   const handleSaveStudent = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
+    const newDni = (formData.get("dni") as string || "").trim();
+
     const studentData: Student = {
       id: editingStudent ? editingStudent.id : Date.now().toString(),
       ownerId: currentUser?.parentId || currentUser?.id || "admin-1",
       nombre: formData.get("nombre") as string,
       apellido: formData.get("apellido") as string,
-      dni: formData.get("dni") as string,
+      dni: newDni,
       nivel: formData.get("nivel") as any,
       grado: formData.get("grado") as string,
       seccion: formData.get("seccion") as string,
@@ -2174,6 +2178,19 @@ const App = () => {
       logo: editingStudent?.logo,
       fechaNacimiento: formData.get("fechaNacimiento") as string,
     };
+
+    if (newDni && newDni.trim() !== "") {
+      const existingStudent = students.find(
+        (s) => s.dni === newDni && (!editingStudent || s.id !== editingStudent.id)
+      );
+      if (existingStudent) {
+        setToast({
+          message: `El DNI ${newDni} ya se encuentra registrado`,
+          type: "error",
+        });
+        return;
+      }
+    }
 
     if (editingStudent) {
       setStudents(
@@ -3470,6 +3487,12 @@ const App = () => {
   };
 
   const handleConsultasSearch = async (dni: string) => {
+    const sanitizedDni = (dni || "").trim();
+    if (!sanitizedDni) {
+      setToast({ message: "Por favor ingrese un DNI válido.", type: "error" });
+      return;
+    }
+    
     const pub = globalConfig.publicModules || {
       attendance: true,
       alerts: true,
@@ -3485,8 +3508,9 @@ const App = () => {
       return;
     }
 
+    setToast({ message: "Buscando...", type: "info" });
     try {
-      const result = await api.fetchPublicSearch(dni); // TODO: implement client-side caching
+      const result = await api.fetchPublicSearch(sanitizedDni);
       if (result && result.student) {
         // Temporarily set the state with the fetched data so the modal can display it
         // We don't want to overwrite the main state if an admin is logged in, but for public access it's fine.
@@ -3510,6 +3534,7 @@ const App = () => {
         setIsDniInputModalOpen(false);
         setIsConsultasModalOpen(true);
         setConsultasSearchDni("");
+        setToast({ message: "Información recuperada con éxito", type: "success" });
 
         // Log the search (only if authenticated, or we can just skip logging for public search to avoid complex state updates)
         if (isAuthenticated) {
@@ -3735,6 +3760,7 @@ const App = () => {
             onLogout={handleLogout}
             navItems={navItems}
             originalUser={originalUser}
+            students={students}
             onBackToOriginal={() => {
               if (originalUser) {
                 setCurrentUser(originalUser);
@@ -6861,13 +6887,49 @@ const App = () => {
                         (() => {
                         const filteredGrades = (() => {
                           const searchLower = calificacionesSearch.toLowerCase();
-                          let baseGrades = [...grades];
+                          
+                          // 1. Filter actual grades
+                          let baseGrades = grades.filter((g) => {
+                            const student = students.find((s) => s.id === g.studentId);
+                            const matchesSearch =
+                              (g.studentName || "").toLowerCase().includes(searchLower) ||
+                              (student?.dni || "").toLowerCase().includes(searchLower);
 
-                          if (calificacionesExamenFilter) {
-                            const relevantStudents = students.filter(s => s.rol === 'Estudiante' && (!calificacionesGradeFilter || s.grado === calificacionesGradeFilter));
-                            const existingGradeStudentIds = new Set(
-                              grades.filter(g => g.examType === calificacionesExamenFilter || g.materia === calificacionesExamenFilter).map(g => g.studentId)
+                            const matchesGrade =
+                              !calificacionesGradeFilter ||
+                              student?.grado === calificacionesGradeFilter;
+                            const matchesMateria =
+                              !calificacionesMateriaFilter ||
+                              (g.materia || "").toLowerCase().includes(calificacionesMateriaFilter.toLowerCase());
+                            const matchesExamen = 
+                              calificacionesExamenFilter.length === 0 ||
+                              calificacionesExamenFilter.includes(g.examType || "") || 
+                              calificacionesExamenFilter.some(ef => (g.materia || "").toLowerCase() === ef.toLowerCase());
+
+                            let matchesDate = true;
+                            if (calificacionesDateFilter) {
+                              matchesDate = g.fecha === calificacionesDateFilter;
+                            }
+
+                            return (
+                              matchesSearch &&
+                              matchesGrade &&
+                              matchesMateria &&
+                              matchesExamen &&
+                              matchesDate
                             );
+                          });
+
+                          // 2. If "Show All" is active, synthesize missing students
+                          if (showAllStudentsInRegistros) {
+                            const relevantStudents = students.filter(s => 
+                              s.rol === 'Estudiante' && 
+                              (!calificacionesGradeFilter || s.grado === calificacionesGradeFilter) &&
+                              ((s.nombre + " " + s.apellido).toLowerCase().includes(searchLower) || (s.dni || "").toLowerCase().includes(searchLower))
+                            );
+                            
+                            const existingGradeStudentIds = new Set(baseGrades.map(g => g.studentId));
+                            
                             const synthesizedGrades: any[] = relevantStudents
                               .filter(s => !existingGradeStudentIds.has(s.id))
                               .map(s => ({
@@ -6875,56 +6937,28 @@ const App = () => {
                                 ownerId: s.ownerId,
                                 studentId: s.id,
                                 studentName: `${s.nombre} ${s.apellido}`,
-                                materia: calificacionesMateriaFilter || calificacionesExamenFilter,
-                                examType: calificacionesExamenFilter,
+                                materia: calificacionesMateriaFilter || (calificacionesExamenFilter.length > 0 ? calificacionesExamenFilter[0] : "General"),
+                                examType: (calificacionesExamenFilter.length > 0 ? calificacionesExamenFilter[0] : "General"),
                                 nota: 0,
                                 rawScore: 0,
                                 fecha: calificacionesDateFilter || new Date().toISOString().split('T')[0],
                                 isMissing: true 
                               }));
                             
-                            // Include these synthesized grades into base grades
                             baseGrades = [...baseGrades, ...synthesizedGrades];
                           }
 
-                          return baseGrades
-                            .filter((g) => {
-                              const student = students.find((s) => s.id === g.studentId);
-                              const matchesSearch =
-                                (g.studentName || "").toLowerCase().includes(searchLower) ||
-                                (student?.dni || "").toLowerCase().includes(searchLower);
+                          return baseGrades.sort((a: any, b: any) => {
+                            // First priority: items with grades before missing items
+                            if (a.isMissing && !b.isMissing) return 1;
+                            if (!a.isMissing && b.isMissing) return -1;
 
-                              const matchesGrade =
-                                !calificacionesGradeFilter ||
-                                student?.grado === calificacionesGradeFilter;
-                              const matchesMateria =
-                                !calificacionesMateriaFilter ||
-                                (g.materia || "").toLowerCase().includes(calificacionesMateriaFilter.toLowerCase());
-                              const matchesExamen = 
-                                !calificacionesExamenFilter ||
-                                g.examType === calificacionesExamenFilter || 
-                                (g.materia || "").toLowerCase() === calificacionesExamenFilter.toLowerCase();
-
-                              let matchesDate = true;
-                              if (calificacionesDateFilter) {
-                                matchesDate = g.fecha === calificacionesDateFilter;
-                              }
-
-                              return (
-                                matchesSearch &&
-                                matchesGrade &&
-                                matchesMateria &&
-                                matchesExamen &&
-                                matchesDate
-                              );
-                            })
-                            .sort((a, b) => {
-                              if (registrosSortOrder === "merito")
-                                return b.nota - a.nota;
-                              if (registrosSortOrder === "demerito")
-                                return a.nota - b.nota;
-                              return 0;
-                            });
+                            if (registrosSortOrder === "merito")
+                              return b.nota - a.nota;
+                            if (registrosSortOrder === "demerito")
+                              return a.nota - b.nota;
+                            return 0;
+                          });
                         })();
 
                         return (
@@ -7062,43 +7096,83 @@ const App = () => {
                                   ))}
                                 </select>
                               </div>
-                              <div className="space-y-2">
+                              <div className="space-y-2 relative">
                                 <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">
-                                  Examen
+                                  Exámenes
                                 </label>
-                                <select
-                                  value={calificacionesExamenFilter}
-                                  onChange={(e) =>
-                                    setCalificacionesExamenFilter(
-                                      e.target.value,
-                                    )
-                                  }
-                                  className="w-full px-4 py-2 rounded-xl bg-white border-none font-bold text-slate-800 text-xs shadow-sm outline-none focus:ring-2 focus:ring-blue-500"
-                                >
-                                  <option value="">Todos los Exámenes</option>
-                                  {activeConfig.examTypes?.map((e) => (
-                                    <option key={e.id} value={e.name}>
-                                      {e.name}
-                                    </option>
-                                  ))}
-                                </select>
+                                <div className="relative">
+                                  <button
+                                    onClick={() => setIsExamFilterOpen(!isExamFilterOpen)}
+                                    className="w-full px-4 py-2 rounded-xl bg-white border-none font-bold text-slate-800 text-xs shadow-sm outline-none focus:ring-2 focus:ring-blue-500 flex items-center justify-between"
+                                  >
+                                    <span className="truncate">
+                                      {calificacionesExamenFilter.length === 0
+                                        ? "Todos los Exámenes"
+                                        : `${calificacionesExamenFilter.length} Seleccionados`}
+                                    </span>
+                                    <ChevronDown size={14} className={`transition-transform ${isExamFilterOpen ? 'rotate-180' : ''}`} />
+                                  </button>
+                                  
+                                  {isExamFilterOpen && (
+                                    <div className="absolute top-full left-0 right-0 mt-2 bg-white rounded-xl shadow-2xl border border-slate-100 z-50 py-2 max-h-[200px] overflow-y-auto animate-fade-in">
+                                      <button
+                                        onClick={() => setCalificacionesExamenFilter([])}
+                                        className="w-full px-4 py-2 text-left text-[10px] font-black uppercase text-blue-600 hover:bg-blue-50 transition-colors border-b border-slate-50 mb-1"
+                                      >
+                                        Limpiar Selección
+                                      </button>
+                                      {activeConfig.examTypes?.map((e) => (
+                                        <button
+                                          key={e.id}
+                                          onClick={() => {
+                                            if (calificacionesExamenFilter.includes(e.name)) {
+                                              setCalificacionesExamenFilter(
+                                                calificacionesExamenFilter.filter(
+                                                  (ex) => ex !== e.name,
+                                                ),
+                                              );
+                                            } else {
+                                              setCalificacionesExamenFilter([
+                                                ...calificacionesExamenFilter,
+                                                e.name,
+                                              ]);
+                                            }
+                                          }}
+                                          className="w-full px-4 py-2 text-left flex items-center justify-between hover:bg-slate-50 transition-colors"
+                                        >
+                                          <span className={`text-xs font-bold ${calificacionesExamenFilter.includes(e.name) ? 'text-blue-600' : 'text-slate-600'}`}>
+                                            {e.name}
+                                          </span>
+                                          {calificacionesExamenFilter.includes(e.name) && (
+                                            <Check size={14} className="text-blue-600" />
+                                          )}
+                                        </button>
+                                      ))}
+                                      {activeConfig.examTypes?.length === 0 && (
+                                        <div className="px-4 py-2 text-xs text-slate-400 italic">Sin exámenes</div>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
                               </div>
                               <div className="space-y-2">
                                 <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">
-                                  Fecha
+                                  Vista General
                                 </label>
-                                <div className="flex gap-2">
-                                  <input
-                                    type="date"
-                                    value={calificacionesDateFilter}
-                                    onChange={(e) =>
-                                      setCalificacionesDateFilter(
-                                        e.target.value,
-                                      )
-                                    }
-                                    className="flex-1 px-4 py-2 rounded-xl bg-white border-none font-bold text-slate-800 text-xs shadow-sm outline-none focus:ring-2 focus:ring-blue-500"
-                                  />
-                                </div>
+                                <button
+                                  onClick={() => setShowAllStudentsInRegistros(!showAllStudentsInRegistros)}
+                                  className={`w-full flex items-center justify-center gap-2 px-4 py-2 rounded-xl font-bold text-[10px] uppercase tracking-widest transition-all ${
+                                    showAllStudentsInRegistros
+                                      ? "bg-indigo-600 text-white shadow-lg"
+                                      : "bg-white text-slate-500 shadow-sm hover:bg-slate-50"
+                                  }`}
+                                >
+                                  {showAllStudentsInRegistros ? (
+                                    <><Eye size={12} /> Mostrar Todos</>
+                                  ) : (
+                                    <><Filter size={12} /> Filtrar con Nota</>
+                                  )}
+                                </button>
                               </div>
                               <div className="space-y-2">
                                 <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">
@@ -7123,14 +7197,15 @@ const App = () => {
                                       setCalificacionesSearch("");
                                       setCalificacionesGradeFilter("");
                                       setCalificacionesMateriaFilter("");
-                                      setCalificacionesExamenFilter("");
+                                      setCalificacionesExamenFilter([]);
+                                      setShowAllStudentsInRegistros(false);
                                       setCalificacionesDateFilter("");
                                       setRegistrosSortOrder("ninguno");
                                     }}
                                     className="w-[34px] flex-shrink-0 bg-white text-slate-400 hover:text-blue-600 rounded-xl shadow-sm transition-all flex items-center justify-center outline-none focus:ring-2 focus:ring-blue-500"
                                     title="Limpiar Filtros"
                                   >
-                                    <RefreshCw size={14} />
+                                    <RotateCcw size={14} />
                                   </button>
                                 </div>
                               </div>
@@ -11701,7 +11776,6 @@ const App = () => {
                         type="date"
                         name="fechaNacimiento"
                         defaultValue={editingStudent?.fechaNacimiento}
-                        required
                         className="w-full p-4 rounded-2xl bg-white border-2 border-slate-100 focus:border-blue-500 font-black text-sm shadow-sm transition-all outline-none"
                       />
                     </div>
@@ -16076,121 +16150,123 @@ const App = () => {
         </div>
       )}
       {editingGrade && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-slate-950/80 backdrop-blur-xl animate-fade-in overflow-y-auto">
-          {(editingGrade.isOpticalSheet || editingGrade.isFromPublicConsultas) ? (
-            <div className="w-full max-w-4xl animate-slide-up relative mt-20 mb-20">
-              <button
-                onClick={() => setEditingGrade(null)}
-                className="absolute -top-12 right-0 p-2 text-white hover:bg-white/10 rounded-full transition-all"
-              >
-                <X size={24} />
-              </button>
-              <FichaOptica
-                students={students}
-                examTypes={examTypes}
-                gradeLevels={gradeLevels}
-                gradeToEdit={editingGrade}
-                onCancelEdit={() => setEditingGrade(null)}
-                onSaveGrade={(updatedGrade) => {
-                  setGrades(
-                    grades.map((g) =>
-                      g.id === updatedGrade.id ? updatedGrade : g,
-                    ),
-                  );
-                  setEditingGrade(null);
-                  setToast({
-                    message: "Calificación actualizada exitosamente",
-                    type: "success",
-                  });
-                }}
-              />
-            </div>
-          ) : (
-            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden animate-slide-up border-8 border-white">
-              <div
-                className="p-10 text-white text-center relative"
-                style={{ backgroundColor: activeConfig.theme.primaryColor }}
-              >
+        <div className="fixed inset-0 z-[100] bg-slate-950/80 backdrop-blur-xl animate-fade-in overflow-y-auto py-12 px-4">
+          <div className="flex min-h-full items-center justify-center">
+            {(editingGrade.isOpticalSheet || editingGrade.isFromPublicConsultas || editingGrade.buenas !== undefined) ? (
+              <div className="w-full max-w-4xl animate-slide-up relative my-auto">
                 <button
                   onClick={() => setEditingGrade(null)}
-                  className="absolute top-6 right-6 p-2 hover:bg-white/10 rounded-full transition-all"
+                  className="absolute -top-12 right-0 p-2 text-white hover:bg-white/10 rounded-full transition-all"
                 >
-                  <X />
+                  <X size={24} />
                 </button>
-                <div className="inline-flex p-4 bg-white/10 rounded-2xl mb-4 shadow-xl border border-white/10">
-                  <Edit size={32} />
-                </div>
-                <h2 className="text-2xl font-black uppercase tracking-tight">
-                  Editar Calificación
-                </h2>
-                <p className="text-white/60 text-[10px] font-bold uppercase tracking-widest mt-1">
-                  {editingGrade.studentName}
-                </p>
+                <FichaOptica
+                  students={students}
+                  examTypes={examTypes}
+                  gradeLevels={gradeLevels}
+                  gradeToEdit={editingGrade}
+                  onCancelEdit={() => setEditingGrade(null)}
+                  onSaveGrade={(updatedGrade) => {
+                    setGrades(
+                      grades.map((g) =>
+                        g.id === updatedGrade.id ? updatedGrade : g,
+                      ),
+                    );
+                    setEditingGrade(null);
+                    setToast({
+                      message: "Calificación actualizada exitosamente",
+                      type: "success",
+                    });
+                  }}
+                />
               </div>
-              <div className="p-10 space-y-6">
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">
-                    Materia / Descripción
-                  </label>
-                  <input
-                    type="text"
-                    value={editingGrade.materia}
-                    onChange={(e) =>
-                      setEditingGrade({
-                        ...editingGrade,
-                        materia: e.target.value,
-                      })
-                    }
-                    className="w-full p-4 rounded-xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 outline-none font-bold text-slate-800"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2 text-center block">
-                    Nota Real
-                  </label>
-                  <input
-                    type="number"
-                    value={editingGrade.nota}
-                    onChange={(e) =>
-                      setEditingGrade({
-                        ...editingGrade,
-                        nota: parseFloat(e.target.value) || 0,
-                      })
-                    }
-                    className="w-full p-6 rounded-2xl bg-slate-50 border-4 border-slate-100 focus:border-blue-500 outline-none text-5xl text-center font-black text-blue-600 shadow-inner"
-                    min="0"
-                    max="20"
-                  />
-                </div>
-                <div className="flex gap-4 pt-4">
+            ) : (
+              <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-lg overflow-hidden animate-slide-up border-8 border-white my-auto">
+                <div
+                  className="p-10 text-white text-center relative"
+                  style={{ backgroundColor: activeConfig.theme.primaryColor }}
+                >
                   <button
                     onClick={() => setEditingGrade(null)}
-                    className="flex-1 py-4 bg-slate-100 text-slate-500 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-200 transition-all"
+                    className="absolute top-6 right-6 p-2 hover:bg-white/10 rounded-full transition-all"
                   >
-                    Cancelar
+                    <X />
                   </button>
-                  <button
-                    onClick={() => {
-                      setGrades(
-                        grades.map((g) =>
-                          g.id === editingGrade.id ? editingGrade : g,
-                        ),
-                      );
-                      setEditingGrade(null);
-                      setToast({
-                        message: "Calificación actualizada",
-                        type: "success",
-                      });
-                    }}
-                    className="flex-1 py-4 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-lg hover:scale-[1.02] active:scale-95 transition-all"
-                    style={{ backgroundColor: activeConfig.theme.primaryColor }}
-                  >
-                    Guardar Cambios
-                  </button>
+                  <div className="inline-flex p-4 bg-white/10 rounded-2xl mb-4 shadow-xl border border-white/10">
+                    <Edit size={32} />
+                  </div>
+                  <h2 className="text-2xl font-black uppercase tracking-tight">
+                    Editar Calificación
+                  </h2>
+                  <p className="text-white/60 text-[10px] font-bold uppercase tracking-widest mt-1">
+                    {editingGrade.studentName}
+                  </p>
+                </div>
+                <div className="p-10 space-y-6">
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">
+                      Materia / Descripción
+                    </label>
+                    <input
+                      type="text"
+                      value={editingGrade.materia}
+                      onChange={(e) =>
+                        setEditingGrade({
+                          ...editingGrade,
+                          materia: e.target.value,
+                        })
+                      }
+                      className="w-full p-4 rounded-xl bg-slate-50 border-2 border-slate-100 focus:border-blue-500 outline-none font-bold text-slate-800"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2 text-center block">
+                      Nota Real
+                    </label>
+                    <input
+                      type="number"
+                      value={editingGrade.nota}
+                      onChange={(e) =>
+                        setEditingGrade({
+                          ...editingGrade,
+                          nota: parseFloat(e.target.value) || 0,
+                        })
+                      }
+                      className="w-full p-6 rounded-2xl bg-slate-50 border-4 border-slate-100 focus:border-blue-500 outline-none text-5xl text-center font-black text-blue-600 shadow-inner"
+                      min="0"
+                      max="20"
+                    />
+                  </div>
+                  <div className="flex gap-4 pt-4">
+                    <button
+                      onClick={() => setEditingGrade(null)}
+                      className="flex-1 py-4 bg-slate-100 text-slate-500 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-200 transition-all"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      onClick={() => {
+                        setGrades(
+                          grades.map((g) =>
+                            g.id === editingGrade.id ? editingGrade : g,
+                          ),
+                        );
+                        setEditingGrade(null);
+                        setToast({
+                          message: "Calificación actualizada",
+                          type: "success",
+                        });
+                      }}
+                      className="flex-1 py-4 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-lg hover:scale-[1.02] active:scale-95 transition-all"
+                      style={{ backgroundColor: activeConfig.theme.primaryColor }}
+                    >
+                      Guardar Cambios
+                    </button>
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       )}
 

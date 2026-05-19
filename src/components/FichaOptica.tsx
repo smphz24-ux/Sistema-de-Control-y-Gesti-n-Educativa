@@ -37,6 +37,16 @@ const FichaOptica: React.FC<FichaOpticaProps> = ({ students, examTypes, gradeLev
     return {};
   });
 
+  const [isManualMode, setIsManualMode] = useState(() => {
+    return !!(gradeToEdit && (!gradeToEdit.studentAnswers || gradeToEdit.studentAnswers.length === 0));
+  });
+
+  const [manualCounts, setManualCounts] = useState(() => ({
+    buenas: gradeToEdit?.buenas || 0,
+    malas: gradeToEdit?.malas || 0,
+    blancas: gradeToEdit?.blancas || 0
+  }));
+
   const filteredStudents = students.filter(s => s.rol !== 'Docente' && s.nivel !== 'Docente' && (s.dni.includes(dni) || `${s.nombre} ${s.apellido}`.toLowerCase().includes(dni.toLowerCase())));
 
   const handleMarkAnswer = (qIdx: number, answer: string) => {
@@ -47,22 +57,27 @@ const FichaOptica: React.FC<FichaOpticaProps> = ({ students, examTypes, gradeLev
   };
 
   const handleSave = () => {
-    if (!selectedStudent || !selectedExam || !selectedExam.answerKey) return;
+    if (!selectedStudent || !selectedExam) return;
     
     let buenas = 0;
     let malas = 0;
     let blancas = 0;
     
-    // In case no exam was selected, handle it
-    if (!selectedExam) return;
-
-    for(let i = 1; i <= selectedExam.numQuestions; i++) {
-        if (!answers[i]) blancas++;
-        else if (answers[i] === (selectedExam.answerKey?.[i-1] || '')) buenas++;
-        else malas++;
+    if (isManualMode) {
+      buenas = manualCounts.buenas;
+      malas = manualCounts.malas;
+      blancas = manualCounts.blancas;
+    } else {
+      if (!selectedExam.answerKey) return;
+      for(let i = 1; i <= selectedExam.numQuestions; i++) {
+          if (!answers[i]) blancas++;
+          else if (answers[i] === (selectedExam.answerKey?.[i-1] || '')) buenas++;
+          else malas++;
+      }
     }
 
-    const nota = (buenas * selectedExam.pointsPerGood) + (malas * selectedExam.pointsPerBad) + (blancas * selectedExam.pointsPerBlank);
+    const rawScore = (buenas * selectedExam.pointsPerGood) + (malas * selectedExam.pointsPerBad) + (blancas * selectedExam.pointsPerBlank);
+    const nota = selectedExam.divisor && selectedExam.divisor > 0 ? rawScore / selectedExam.divisor : rawScore;
 
     const grade: Grade = {
       id: gradeToEdit?.id || Math.random().toString(36).substr(2, 9),
@@ -80,7 +95,9 @@ const FichaOptica: React.FC<FichaOpticaProps> = ({ students, examTypes, gradeLev
       pointsPerGood: selectedExam.pointsPerGood,
       pointsPerBad: selectedExam.pointsPerBad,
       pointsPerBlank: selectedExam.pointsPerBlank,
-      studentAnswers: Array.from({ length: selectedExam.numQuestions }).map((_, i) => answers[i + 1] || ''),
+      divisor: selectedExam.divisor || 1,
+      rawScore: rawScore,
+      studentAnswers: isManualMode ? [] : Array.from({ length: selectedExam.numQuestions }).map((_, i) => answers[i + 1] || ''),
       isOpticalSheet: true,
       isFromPublicConsultas: gradeToEdit?.isFromPublicConsultas || false
     };
@@ -89,11 +106,13 @@ const FichaOptica: React.FC<FichaOpticaProps> = ({ students, examTypes, gradeLev
     if (!gradeToEdit) {
       setSelectedStudent(null);
       setAnswers({});
+      setIsManualMode(false);
+      setManualCounts({ buenas: 0, malas: 0, blancas: 0 });
     }
   };
 
   return (
-    <div className="bg-white rounded-[2rem] p-8 shadow-2xl border-t-8 border-t-indigo-600 max-w-4xl mx-auto overflow-hidden">
+    <div className="bg-white rounded-3xl md:rounded-[2.5rem] p-5 sm:p-10 shadow-2xl border-t-8 border-t-indigo-600 w-full max-w-4xl mx-auto overflow-visible">
       <div className="flex items-center justify-between mb-8">
         <div>
           <h2 className="text-3xl font-black text-slate-800 uppercase tracking-tight">
@@ -174,6 +193,12 @@ const FichaOptica: React.FC<FichaOpticaProps> = ({ students, examTypes, gradeLev
                   <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest mb-1">Puntaje Total</p>
                   <p className="text-4xl sm:text-5xl font-black text-indigo-600 tabular-nums">
                     {(() => {
+                      if (isManualMode) {
+                        const raw = (manualCounts.buenas * selectedExam.pointsPerGood) + 
+                                    (manualCounts.malas * selectedExam.pointsPerBad) + 
+                                    (manualCounts.blancas * selectedExam.pointsPerBlank);
+                        return (selectedExam.divisor && selectedExam.divisor > 0 ? raw / selectedExam.divisor : raw).toFixed(1);
+                      }
                       const b = Object.entries(answers).filter(([q, a]) => a && a === selectedExam.answerKey?.[parseInt(q) - 1]).length;
                       const m = Object.entries(answers).filter(([q, a]) => a && a !== selectedExam.answerKey?.[parseInt(q) - 1]).length;
                       const bl = selectedExam.numQuestions - Object.entries(answers).filter(([q, a]) => a).length;
@@ -184,20 +209,45 @@ const FichaOptica: React.FC<FichaOpticaProps> = ({ students, examTypes, gradeLev
                 <div className="grid grid-cols-3 gap-3 w-full">
                   <div className="flex flex-col items-center">
                     <span className="text-[9px] font-black text-emerald-500 uppercase tracking-tighter">Buenas</span>
-                    <span className="text-sm font-black text-emerald-600">{Object.entries(answers).filter(([q, a]) => a && a === selectedExam.answerKey?.[parseInt(q) - 1]).length}</span>
+                    <span className="text-sm font-black text-emerald-600">
+                      {isManualMode ? manualCounts.buenas : Object.entries(answers).filter(([q, a]) => a && a === selectedExam.answerKey?.[parseInt(q) - 1]).length}
+                    </span>
                   </div>
                   <div className="flex flex-col items-center">
                     <span className="text-[9px] font-black text-rose-500 uppercase tracking-tighter">Malas</span>
-                    <span className="text-sm font-black text-rose-600">{Object.entries(answers).filter(([q, a]) => a && a !== selectedExam.answerKey?.[parseInt(q) - 1]).length}</span>
+                    <span className="text-sm font-black text-rose-600">
+                      {isManualMode ? manualCounts.malas : Object.entries(answers).filter(([q, a]) => a && a !== selectedExam.answerKey?.[parseInt(q) - 1]).length}
+                    </span>
                   </div>
                   <div className="flex flex-col items-center">
                     <span className="text-[9px] font-black text-slate-400 uppercase tracking-tighter">Blancas</span>
-                    <span className="text-sm font-black text-slate-500">{selectedExam.numQuestions - Object.entries(answers).filter(([q, a]) => a).length}</span>
+                    <span className="text-sm font-black text-slate-500">
+                      {isManualMode ? manualCounts.blancas : selectedExam.numQuestions - Object.entries(answers).filter(([q, a]) => a).length}
+                    </span>
                   </div>
                 </div>
               </div>
             )}
           </div>
+
+          {!gradeToEdit && (
+            <div className="flex justify-center mb-4">
+              <div className="bg-slate-100 p-1 rounded-2xl flex">
+                <button
+                  onClick={() => setIsManualMode(false)}
+                  className={`px-6 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${!isManualMode ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500'}`}
+                >
+                  Ficha Óptica
+                </button>
+                <button
+                  onClick={() => setIsManualMode(true)}
+                  className={`px-6 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${isManualMode ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500'}`}
+                >
+                  Conteo Manual
+                </button>
+              </div>
+            </div>
+          )}
           
           <div className="space-y-2">
               <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-4">Selección de Examen</label>
@@ -217,7 +267,53 @@ const FichaOptica: React.FC<FichaOpticaProps> = ({ students, examTypes, gradeLev
               </select>
           </div>
 
-          {selectedExam && (
+          {selectedExam && isManualMode && (
+            <div className="bg-slate-50 p-8 rounded-[2.5rem] border-2 border-slate-100 animate-fade-in">
+              <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest mb-6 text-center">Ingreso Manual de Resultados</p>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+                {[
+                  { label: 'Buenas', key: 'buenas', color: 'emerald' },
+                  { label: 'Malas', key: 'malas', color: 'rose' },
+                  { label: 'Blancas', key: 'blancas', color: 'slate' }
+                ].map((field) => (
+                  <div key={field.label} className="bg-white p-6 rounded-[2rem] border-2 border-slate-50 shadow-sm transition-all hover:border-slate-200">
+                    <label className={`text-[11px] font-black text-${field.color}-500 uppercase tracking-widest block mb-3 text-center`}>
+                      {field.label}
+                    </label>
+                    <input
+                      type="number"
+                      value={manualCounts[field.key as keyof typeof manualCounts]}
+                      onChange={(e) => {
+                        const val = parseInt(e.target.value) || 0;
+                        setManualCounts(prev => ({ ...prev, [field.key]: val }));
+                      }}
+                      className={`w-full p-4 rounded-2xl bg-${field.color}-50 border-none font-black text-${field.color}-700 text-center text-2xl outline-none focus:ring-4 focus:ring-${field.color}-500 transition-all`}
+                    />
+                  </div>
+                ))}
+              </div>
+              <div className="mt-8 p-6 bg-indigo-600 rounded-3xl text-white flex items-center justify-between shadow-xl">
+                 <div>
+                    <p className="text-[10px] font-black uppercase tracking-widest opacity-60 leading-none mb-2">Nota Final</p>
+                    <p className="text-4xl font-black">
+                      {(() => {
+                        const raw = (manualCounts.buenas * selectedExam.pointsPerGood) + 
+                                    (manualCounts.malas * selectedExam.pointsPerBad) + 
+                                    (manualCounts.blancas * selectedExam.pointsPerBlank);
+                        return (selectedExam.divisor && selectedExam.divisor > 0 ? raw / selectedExam.divisor : raw).toFixed(1);
+                      })()}
+                    </p>
+                 </div>
+                 <div className="h-10 w-px bg-white/20"></div>
+                 <div className="text-right">
+                    <p className="text-[10px] font-black uppercase tracking-widest opacity-60 leading-none mb-2">Máx Preguntas</p>
+                    <p className="text-2xl font-black">{selectedExam.numQuestions}</p>
+                 </div>
+              </div>
+            </div>
+          )}
+
+          {selectedExam && !isManualMode && (
             <div className="bg-slate-50/50 p-6 rounded-[2.5rem] border-2 border-slate-50">
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
                 {Array.from({ length: 4 }).map((_, colIndex) => {

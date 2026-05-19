@@ -28,26 +28,14 @@ const Landing: React.FC<LandingProps> = ({ globalConfig, onConsultasSearch, onAd
   const pub = globalConfig.publicModules || { attendance: true, alerts: true, schedule: true, grades: true, exams: true };
   const isConsultasEnabled = pub.attendance || pub.alerts || pub.schedule || pub.grades || pub.exams !== false;
 
-  useEffect(() => {
-    if (consultasSearchDni.length === 8) {
-      onConsultasSearch(consultasSearchDni);
+  const handleConsultasSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = consultasSearchDni.trim();
+    if (trimmed) {
+      onConsultasSearch(trimmed);
       setConsultasSearchDni("");
       setIsDniInputModalOpen(false);
     }
-  }, [consultasSearchDni, onConsultasSearch]);
-
-  useEffect(() => {
-    if (asistenciaDni.length === 8) {
-      onMarkAttendance(asistenciaDni, asistenciaType);
-      setAsistenciaDni("");
-    }
-  }, [asistenciaDni, onMarkAttendance, asistenciaType]);
-
-  const handleConsultasSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    onConsultasSearch(consultasSearchDni);
-    setConsultasSearchDni("");
-    setIsDniInputModalOpen(false);
   };
 
   const handlePasswordSubmit = async (e: React.FormEvent) => {
@@ -64,13 +52,19 @@ const Landing: React.FC<LandingProps> = ({ globalConfig, onConsultasSearch, onAd
 
   const handleAsistenciaSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onMarkAttendance(asistenciaDni, asistenciaType);
-    setAsistenciaDni("");
+    const trimmed = (asistenciaDni || "").trim();
+    if (trimmed) {
+      onMarkAttendance(trimmed, asistenciaType);
+      setAsistenciaDni("");
+    }
   };
 
   const handleScan = React.useCallback((dni: string) => {
-    onMarkAttendance(dni, asistenciaType);
-    setIsScanning(false);
+    const trimmed = (dni || "").trim();
+    if (trimmed) {
+      onMarkAttendance(trimmed, asistenciaType);
+      setIsScanning(false);
+    }
   }, [onMarkAttendance, asistenciaType]);
 
   return (
